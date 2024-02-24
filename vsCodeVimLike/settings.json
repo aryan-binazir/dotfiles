@@ -1,0 +1,32 @@
+{
+    "vim.leader": "<Space>",
+    "vim.hlsearch": true,
+    "vim.normalModeKeyBindingsNonRecursive": [
+        // NAVIGATION
+        {
+            "before": ["leader", "h"],
+            "commands": ["workbench.action.focusLeftGroup"]
+        },
+        {
+            "before": ["leader", "j"],
+            "commands": ["workbench.action.focusBelowGroup"]
+        },
+        {
+            "before": ["leader", "k"],
+            "commands": ["workbench.action.focusAboveGroup"]
+        },
+        {
+            "before": ["leader", "l"],
+            "commands": ["workbench.action.focusRightGroup"]
+        },
+        { "before": ["leader", "ww"], "commands": [":w!"] },
+        { "before": ["leader", "qq"], "commands": [":q!"] },
+        { "before": ["leader", "xx"], "commands": [":x!"] }
+    ],
+
+    // Add the new keybindings below
+    "keybindings": [
+        { "key": "ctrl+p", "command": "workbench.action.quickOpen" },
+        { "key": "ctrl+f", "command": "actions.find" }
+    ]
+}
