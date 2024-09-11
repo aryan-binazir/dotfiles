@@ -1,4 +1,6 @@
-#Run to add more bindings to gnome environment
+# Run to add more bindings to gnome environment
+# Alt + [num] navigates to Desktop, set fixed number of Desktops to 10 in Gnome
+# Alt + Shift + [num] moves application to Desktop
 
 gsettings set "org.gnome.desktop.wm.keybindings" "switch-to-workspace-1" "['<Alt>1']" 
 gsettings set "org.gnome.desktop.wm.keybindings" "move-to-workspace-1" "['<Alt><Shift>1']" 
@@ -31,3 +33,17 @@ gsettings set "org.gnome.desktop.wm.keybindings" "move-to-workspace-9" "['<Alt><
 gsettings set "org.gnome.desktop.wm.keybindings" "switch-to-workspace-10" "['<Alt>0']" 
 gsettings set "org.gnome.desktop.wm.keybindings" "move-to-workspace-10" "['<Alt><Shift>0']" 
 
+# Alt + h/l to go left or right a Desktop
+gsettings set "org.gnome.desktop.wm.keybindings" "switch-to-workspace-left" "['<Alt>h']"
+gsettings set "org.gnome.desktop.wm.keybindings" "switch-to-workspace-right" "['<Alt>l']"
+
+# Remove transition animations when switching desktops
+gsettings set org.gnome.desktop.interface enable-animations false
+
+# Maximize window with Alt + k
+gsettings set org.gnome.desktop.wm.keybindings maximize "['<Super>k']"
+gsettings set org.gnome.desktop.wm.keybindings begin-move-left "['<Super>h']"
+gsettings set org.gnome.desktop.wm.keybindings begin-move-right "['<Super>l']"
+gsettings set org.gnome.desktop.wm.keybindings unmaximize "['<Super>j']"
+
+# Manually set view split on left/right to Super + h/l
