@@ -42,7 +42,6 @@ gsettings set org.gnome.desktop.interface enable-animations false
 
 # Maximize/toggle window with Super + Shift + k/j
 gsettings set org.gnome.desktop.wm.keybindings maximize "['<Shift><Super>k']"
-gsettings set org.gnome.desktop.wm.keybindings maximize "['<Shift><Super>j']"
 
 # Close window with Alt + Q
 gsettings set org.gnome.desktop.wm.keybindings close "['<Alt>q']"
