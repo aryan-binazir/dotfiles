@@ -40,7 +40,7 @@ gsettings set "org.gnome.desktop.wm.keybindings" "switch-to-workspace-right" "['
 # Remove transition animations when switching desktops
 gsettings set org.gnome.desktop.interface enable-animations false
 
-# Maximize window with Alt + k
+# Maximize window with Super + k
 gsettings set org.gnome.desktop.wm.keybindings maximize "['<Super>k']"
 
 # Manually set view split on left/right to Super + h/l
