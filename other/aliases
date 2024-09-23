@@ -1,0 +1,11 @@
+# My aliases
+alias python=python3
+
+alias vi=nvim
+alias vim=nvim
+
+alias lg=lazygit
+alias code=codium
+
+alias repos='cd ~/repos'
+alias tm='~/.local/bin/tm'

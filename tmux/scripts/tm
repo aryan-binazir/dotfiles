@@ -13,7 +13,6 @@ fi
 selected_name=$(basename "$selected" | tr . _)
 tmux_running=$(pgrep tmux)
 
-# Start a new session if tmux is not running
 if [[ -z $TMUX ]] && [[ -z $tmux_running ]]; then
     tmux new-session -d -s $selected_name -c $selected
     tmux split-window -v -t $selected_name:0 -c $selected
@@ -22,7 +21,6 @@ if [[ -z $TMUX ]] && [[ -z $tmux_running ]]; then
     exit 0
 fi
 
-# If session doesn't exist, create it
 if ! tmux has-session -t=$selected_name 2> /dev/null; then
     tmux new-session -ds $selected_name -c $selected
     tmux split-window -v -t $selected_name:0 -c $selected
