@@ -1,6 +1,8 @@
 # .dotfiles
 
-My Neovim config: https://github.com/aryan-binazir/kickstart.nvim
+Some scripts and configurations I need to make my dev workflow smooth.
+
+My Neovim config: https://github.com/aryan-binazir/neovim-config
 
 Some apps I need installed
 
