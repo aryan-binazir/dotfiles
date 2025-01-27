@@ -10,4 +10,8 @@ Some apps I need installed
 - pgrep
 - fzf
 - ripgrep
+- sway Window Manager
+- neovim
+- tmux
+- wofi
 
