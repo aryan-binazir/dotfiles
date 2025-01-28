@@ -211,7 +211,7 @@ bindsym $mod+r mode "resize"
 #
 # Workspace assignments
 #
-assign [app_id="net.thunderbird.Thunderbird"] workspace number 1
+assign [app_id="thunderbird"] workspace number 1
 assign [app_id="com.mitchellh.ghostty"] workspace number 2
 assign [class="Brave-browser"] workspace number 3
 assign [app_id="zen"] workspace number 4
@@ -223,13 +223,16 @@ assign [class="Windsurf"] workspace number 6
 assign [class="mongodb-compass"] workspace number 7
 assign [class="discord"] workspace number 8
 assign [class="zoom"] workspace number 8
+assign [app_id="slack"] workspace number 9
+assign [app_id="zen"] workspace number 4
+
 #
 # Autostart applications
 #
-exec flatpak run org.mozilla.Thunderbird
+exec thunderbird
 exec ghostty
 exec brave-browser
-exec flatpak run net.mkuznets.zen
+exec flatpak run app.zen_browser.zen
 exec flatpak run md.obsidian.Obsidian
 exec flatpak run com.slack.Slack
 exec flatpak run com.dropbox.Client
