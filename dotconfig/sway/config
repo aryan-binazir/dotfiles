@@ -236,6 +236,18 @@ exec flatpak run app.zen_browser.zen
 exec flatpak run md.obsidian.Obsidian
 exec flatpak run com.slack.Slack
 exec flatpak run com.dropbox.Client
+
+# Window decoration settings
+default_border pixel 0
+default_floating_border pixel 0
+hide_edge_borders both
+
+# Title bar colors
+client.focused          #000000 #000000 #ffffff #000000 #000000
+client.focused_inactive #000000 #000000 #ffffff #000000 #000000
+client.unfocused       #000000 #000000 #ffffff #000000 #000000
+client.urgent          #000000 #000000 #ffffff #000000 #000000
+
 # Include configs from 3 locations:
 #  - /usr/share/sway/config.d
 #  - /etc/sway/config.d
