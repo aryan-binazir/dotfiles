@@ -222,6 +222,7 @@ assign [app_id="com.mitchellh.ghostty"] workspace number 2
 # assign [class="Brave-browser"] workspace number 3
 assign [app_id="zen"] workspace number 3
 assign [class="obsidian"] workspace number 5
+assign [app_id="firefox"] workspace number 7
 assign [class="Slack"] workspace number 9
 
 # Additional workspace assignments (no autostart)
