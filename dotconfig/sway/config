@@ -219,8 +219,8 @@ bindsym $mod+r mode "resize"
 #
 assign [app_id="thunderbird"] workspace number 1
 assign [app_id="com.mitchellh.ghostty"] workspace number 2
-assign [app_id="zen"] workspace number 3
-assign [app_id="brave-browser"] workspace number 4
+assign [app_id="brave-browser"] workspace number 3
+assign [app_id="zen"] workspace number 4
 assign [class="obsidian"] workspace number 5
 assign [class="Windsurf"] workspace number 6
 assign [app_id="code"] workspace number 6
