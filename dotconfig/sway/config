@@ -224,6 +224,7 @@ assign [app_id="zen"] workspace number 4
 assign [app_id="firefox"] workspace number 4
 assign [class="obsidian"] workspace number 5
 assign [class="Windsurf"] workspace number 6
+assign [app_id="cursor"] workspace number 6
 assign [app_id="code"] workspace number 6
 assign [class="mongodb-compass"] workspace number 7
 assign [class="zoom"] workspace number 8
