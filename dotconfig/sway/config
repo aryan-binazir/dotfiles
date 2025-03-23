@@ -5,9 +5,9 @@
 # Read `man 5 sway` for a complete reference.
 
 ### Variables
-#
-# Logo key. Use Mod1 for Alt.
+# Alt key
 set $mod Mod1
+# Super key
 set $mod2 Mod4
 # Home row direction keys, like vim
 set $left h
@@ -86,7 +86,7 @@ input "type:pointer" {
     bindsym $mod+Return exec $term
 
     # Kill focused window
-    bindsym $mod2+q kill
+    bindsym $mod+q kill
 
     # Start your launcher
     bindsym $mod+space exec $menu
