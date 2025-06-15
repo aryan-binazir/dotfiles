@@ -1,0 +1,13 @@
+# Kanshi configuration for automatic display switching
+# Framework 13 with external 4K monitor via USB hub
+
+# Profile when external Dell 4K monitor is connected (docked)
+profile docked {
+    output eDP-1 disable
+    output DP-10 enable mode 3840x2160@60Hz scale 2
+}
+
+# Profile when only internal display is available (laptop)  
+profile laptop {
+    output eDP-1 enable mode 2880x1920@120Hz scale 2
+}
