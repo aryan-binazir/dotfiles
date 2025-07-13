@@ -2,12 +2,22 @@
 # Framework 13 with external 4K monitor via USB hub
 
 # Profile when external Dell 4K monitor is connected (docked)
+# Uses display description for robust identification across different ports
 profile docked {
     output eDP-1 disable
-    output DP-10 enable mode 3840x2160@60Hz scale 2
+    output "Dell Inc. DELL U2723QE C1J6M04" enable mode 3840x2160@60Hz scale 2
+    exec notify-send "Display Mode" "Switched to external display - docked"
+}
+
+# Fallback profile using port number in case description fails
+profile docked_fallback {
+    output eDP-1 disable
+    output DP-9 enable mode 3840x2160@60Hz scale 2
+    exec notify-send "Display Mode" "Switched to external display - fallback"
 }
 
 # Profile when only internal display is available (laptop)  
 profile laptop {
     output eDP-1 enable mode 2880x1920@120Hz scale 2
+    exec notify-send "Display Mode" "Switched to laptop display"
 }
