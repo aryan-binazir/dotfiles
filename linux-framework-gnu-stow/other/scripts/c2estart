@@ -1,0 +1,3 @@
+#!/bin/bash
+sudo systemctl start udevmon
+echo "caps2esc started"

@@ -1,0 +1,37 @@
+# API Keys and Sensitive Files
+*api_keys*
+*.secret
+*.key
+.env*
+*.pem
+*token*
+*password*
+*passwd*
+
+# System-specific files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
+
+# IDE/Editor files
+.vscode/settings.json
+.idea/
+
+# Personal data
+history
+*_history
+*.log
+
+# SSH keys
+id_rsa*
+id_ed25519*
+id_ecdsa*
+
+# GPG keys
+*.gpg
+*.asc
