@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Thanks Prime for this tmux-sessionizer
-# My version without split
 
 if [[ $# -eq 1 ]]; then
     selected=$1
