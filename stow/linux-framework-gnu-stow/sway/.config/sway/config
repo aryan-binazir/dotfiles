@@ -36,7 +36,7 @@ set $menu $rofi_cmd -show combi -combi-modes drun#run -modes combi
 #
 # Default wallpaper (more resolutions are available in /usr/share/backgrounds/sway/)
 # Requires: desktop-backgrounds-compat, swaybg
-output * bg /usr/share/backgrounds/images/2.jpg fill
+output * bg /home/ar/.config/sway/backgrounds/my-background.jpg fill
 #
 # Example configuration:
 #

@@ -45,7 +45,7 @@ else
     alias vim=nvim
     alias lg=lazygit
     alias repos='cd ~/repos'
-    alias tm='~/.local/bin/tm'
+    # alias tm='~/.local/bin/tm'
 fi
 
 # Additional useful aliases
