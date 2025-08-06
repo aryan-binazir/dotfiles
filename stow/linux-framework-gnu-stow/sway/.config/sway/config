@@ -14,11 +14,11 @@ set $left h
 set $down j
 set $up k
 set $right l
-# Your preferred terminal emulator
-# Recommends: foot
+
+# Default terminal emulator
 set $term ghostty
 
-# Your default Web Browser
+# Default Web Browser
 set $browser brave-browser
 
 # Take a screenshot
@@ -242,19 +242,15 @@ assign [app_id="net.thunderbird.Thunderbird"] workspace number 1
 assign [app_id="com.mitchellh.ghostty"] workspace number 2
 assign [app_id="brave-browser"] workspace number 3
 assign [app_id="zen"] workspace number 4
-assign [app_id="firefox"] workspace number 4
 assign [app_id="obsidian"] workspace number 5
 assign [class="Code"] workspace number 6
-assign [class="Cursor"] workspace number 6
-assign [class="Windsurf"] workspace number 6
-assign [class="MongoDB Compass"] workspace number 7
+assign [app_id="thunar"] workspace number 7
 assign [class="zoom"] workspace number 7
 assign [app_id="com.slack.Slack"] workspace number 9
 
 # Keep these as fallbacks
 assign [app_id="thunderbird"] workspace number 1
 assign [class="obsidian"] workspace number 5
-assign [class="mongodb-compass"] workspace number 7
 assign [class="Slack"] workspace number 9
 
 #
@@ -263,6 +259,7 @@ assign [class="Slack"] workspace number 9
 exec thunderbird
 exec ghostty
 exec brave-browser
+exec thunar
 # exec flatpak run app.zen_browser.zen
 exec flatpak run md.obsidian.Obsidian
 exec flatpak run com.slack.Slack
