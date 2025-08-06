@@ -271,11 +271,11 @@ default_border pixel 0
 default_floating_border pixel 0
 hide_edge_borders both
 
-# Title bar colors
-client.focused          #000000 #000000 #ffffff #000000 #000000
-client.focused_inactive #000000 #000000 #ffffff #000000 #000000
-client.unfocused       #000000 #000000 #ffffff #000000 #000000
-client.urgent          #000000 #000000 #ffffff #000000 #000000
+# Title bar colors - Adwaita-dark theme
+client.focused          #3584e4 #242424 #ffffff #3584e4 #3584e4
+client.focused_inactive #2d2d2d #2d2d2d #888888 #2d2d2d #2d2d2d
+client.unfocused       #1e1e1e #1e1e1e #666666 #1e1e1e #1e1e1e
+client.urgent          #e01b24 #e01b24 #ffffff #e01b24 #e01b24
 
 # Include configs from 3 locations:
 #  - /usr/share/sway/config.d
