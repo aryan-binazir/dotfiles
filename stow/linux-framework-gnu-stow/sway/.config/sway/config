@@ -21,6 +21,10 @@ set $term ghostty
 # Your default Web Browser
 set $browser brave-browser
 
+# Take a screenshot
+bindsym $mod2+Shift+4 exec grim -g "$(slurp)" ~/Pictures/screenshot-$(date +%Y%m%d-%H%M%S).png
+bindsym $mod2+Shift+3 exec grim ~/Pictures/screenshot-$(date +%Y%m%d-%H%M%S).png
+
 # Your preferred application launcher
 # Note: pass the final command to swaymsg so that the resulting window can be opened
 # on the original workspace that the command was run on.
