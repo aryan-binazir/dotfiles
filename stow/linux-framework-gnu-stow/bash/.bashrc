@@ -83,7 +83,7 @@ parse_git_branch() {
 
 # Custom prompt with colors
 # Format: [user@host dir](git-branch)$ 
-export PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[33m\]$(parse_git_branch)\[\033[00m\]\$ '
+export PS1='\[\033[01;32m\]\u\[\033[00m\]:\[\033[01;34m\]\W\[\033[33m\]$(parse_git_branch)\[\033[00m\]\$ '
 
 # Enable color support for ls and grep
 if [ -x /usr/bin/dircolors ]; then
@@ -131,4 +131,4 @@ alias claude="/home/ar/.claude/local/claude"
 # For Bottles
 export MOZ_ENABLE_WAYLAND=1
 export QT_QPA_PLATFORM=wayland
-alias update="sudo dnf update && sudo dnf upgrade && flatpak update && sudo snap refresh && claude update && npm -g update"
+alias update="sudo dnf update -y && sudo dnf upgrade -y && flatpak update -y && sudo snap refresh && claude update && npm -g update"
