@@ -18,8 +18,7 @@ alias lg=lazygit
 alias update='brew update && brew upgrade && brew upgrade --cask --greedy && npm -g update && claude update'
 
 
-. "$HOME/.local/bin/env"
-export PATH="$HOME/.local/bin:$PATH"
-
-
 alias claude="/Users/aryanbinazir/.claude/local/claude"
+
+# Clean prompt - username directory λ
+export PS1='%n %1~ λ '
