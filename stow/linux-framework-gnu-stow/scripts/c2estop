@@ -1,3 +1,0 @@
-#!/bin/bash
-sudo systemctl stop udevmon
-echo "caps2esc stopped"
