@@ -253,24 +253,31 @@ assign [app_id="zen"] workspace number 4
 assign [app_id="obsidian"] workspace number 5
 assign [class="obsidian"] workspace number 5
 
-assign [app_id="brave-apieeommpmigoeakncdhabldpejghenk-Default"] workspace number 6  # Basecamp
+# Basecamp
+assign [app_id="brave-apieeommpmigoeakncdhabldpejghenk-Default"] workspace number 6
 
-# AI assistants on workspace 8
-assign [app_id="brave-cadlkienfkclaiaibeoongdcgmdikeeg-Default"] workspace number 8  # ChatGPT
-assign [app_id="brave-fmpnliohjhemenmnlpbfagaolkdacoja-Default"] workspace number 8  # Claude
-assign [app_id="brave-gdfaincndogidkdcdkhapmbffkckdkhn-Default"] workspace number 8  # Gemini
-assign [app_id="brave-kpmdbogdmbfckbgdfdffkleoleokbhod-Default"] workspace number 8  # Perplexity
-assign [app_id="brave-ihhigimjhmcaaaimfbkfipehncfnkipi-Default"] workspace number 8  # T3 Chat
+# workspace 8 - AI
+# Claude
+assign [app_id="brave-fmpnliohjhemenmnlpbfagaolkdacoja-Default"] workspace number 8
+# ChatGPT
+assign [app_id="brave-cadlkienfkclaiaibeoongdcgmdikeeg-Default"] workspace number 8
+# Gemini
+assign [app_id="brave-gdfaincndogidkdcdkhapmbffkckdkhn-Default"] workspace number 8
+# Perplexity
+assign [app_id="brave-kpmdbogdmbfckbgdfdffkleoleokbhod-Default"] workspace number 8
+# T3 Chat
+assign [app_id="brave-ihhigimjhmcaaaimfbkfipehncfnkipi-Default"] workspace number 8
 
-assign [class="Slack"] workspace number 9
 assign [app_id="com.slack.Slack"] workspace number 9
 
 # workspace 10 less used apps
 assign [app_id="thunar"] workspace number 10
 assign [class="zoom"] workspace number 10
-assign [app_id="brave-ppapbcehlphjebahihpfcobkeifkbhcl-Default"] workspace number 10  # YNAB
-assign [app_id="brave-fogdafpmmgpnmghcijkcojahicohbooc-Default"] workspace number 10  # Quicken
-assign [class="Code"] workspace number 10
+# YNAB
+assign [app_id="brave-ppapbcehlphjebahihpfcobkeifkbhcl-Default"] workspace number 10
+# Quicken
+assign [app_id="brave-fogdafpmmgpnmghcijkcojahicohbooc-Default"] workspace number 10
+assign [class="Code"] workspace number 10 Code
 
 
 # Autostart applications
