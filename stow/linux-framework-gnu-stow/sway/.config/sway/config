@@ -237,34 +237,53 @@ mode "resize" {
 bindsym $mod+r mode "resize"
 
 # Workspace assignments
-#
+# workspace 1 mail
 assign [app_id="net.thunderbird.Thunderbird"] workspace number 1
+assign [app_id="thunderbird"] workspace number 1
+
+# workspace 2 terminal/tmux/neovim
 assign [app_id="com.mitchellh.ghostty"] workspace number 2
+
+# workspace 3 main browser
 assign [app_id="brave-browser"] workspace number 3
+
+# workspace 8 second browser
 assign [app_id="zen"] workspace number 4
+
 assign [app_id="obsidian"] workspace number 5
-assign [class="Code"] workspace number 6
-assign [app_id="thunar"] workspace number 7
-assign [class="zoom"] workspace number 7
+assign [class="obsidian"] workspace number 5
+
+assign [app_id="brave-apieeommpmigoeakncdhabldpejghenk-Default"] workspace number 6  # Basecamp
+
+# AI assistants on workspace 8
+assign [app_id="brave-cadlkienfkclaiaibeoongdcgmdikeeg-Default"] workspace number 8  # ChatGPT
+assign [app_id="brave-fmpnliohjhemenmnlpbfagaolkdacoja-Default"] workspace number 8  # Claude
+assign [app_id="brave-gdfaincndogidkdcdkhapmbffkckdkhn-Default"] workspace number 8  # Gemini
+assign [app_id="brave-kpmdbogdmbfckbgdfdffkleoleokbhod-Default"] workspace number 8  # Perplexity
+assign [app_id="brave-ihhigimjhmcaaaimfbkfipehncfnkipi-Default"] workspace number 8  # T3 Chat
+
+assign [class="Slack"] workspace number 9
 assign [app_id="com.slack.Slack"] workspace number 9
 
-# Keep these as fallbacks
-assign [app_id="thunderbird"] workspace number 1
-assign [class="obsidian"] workspace number 5
-assign [class="Slack"] workspace number 9
+# workspace 10 less used apps
+assign [app_id="thunar"] workspace number 10
+assign [class="zoom"] workspace number 10
+assign [app_id="brave-ppapbcehlphjebahihpfcobkeifkbhcl-Default"] workspace number 10  # YNAB
+assign [app_id="brave-fogdafpmmgpnmghcijkcojahicohbooc-Default"] workspace number 10  # Quicken
+assign [class="Code"] workspace number 10
 
-#
+
 # Autostart applications
-#
+exec kanshi
 exec thunderbird
 exec ghostty
 exec brave-browser
 exec thunar
+exec Basecamp
 # exec flatpak run app.zen_browser.zen
 exec flatpak run md.obsidian.Obsidian
 exec flatpak run com.slack.Slack
 exec flatpak run com.dropbox.Client
-exec kanshi
 
 # Window decoration settings
 default_border pixel 0
