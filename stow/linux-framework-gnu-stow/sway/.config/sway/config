@@ -247,7 +247,7 @@ assign [app_id="com.mitchellh.ghostty"] workspace number 2
 # workspace 3 main browser
 assign [app_id="brave-browser"] workspace number 3
 
-# workspace 8 second browser
+# workspace 4 second browser
 assign [app_id="zen"] workspace number 4
 
 assign [app_id="obsidian"] workspace number 5
@@ -268,6 +268,9 @@ assign [app_id="brave-kpmdbogdmbfckbgdfdffkleoleokbhod-Default"] workspace numbe
 # T3 Chat
 assign [app_id="brave-ihhigimjhmcaaaimfbkfipehncfnkipi-Default"] workspace number 8
 
+# workspace 9 - communication
+# WhatsApp Web
+assign [app_id="brave-hnpfjngllnobngcgfapefoaidbinmjnm-Default"] workspace number 9
 assign [app_id="com.slack.Slack"] workspace number 9
 
 # workspace 10 less used apps
@@ -277,8 +280,12 @@ assign [class="zoom"] workspace number 10
 assign [app_id="brave-ppapbcehlphjebahihpfcobkeifkbhcl-Default"] workspace number 10
 # Quicken
 assign [app_id="brave-fogdafpmmgpnmghcijkcojahicohbooc-Default"] workspace number 10
+# Google Calendar
+assign [title="Google Calendar"] workspace number 10
 # Apple Music
 assign [app_id="brave-blgdilankhbcpipclgpdndahbehalgkh-Default"] workspace number 10
+# Apple Notes (Brave PWA)
+assign [app_id="brave-hdbfcilmnlkoiempgdfpifdnhnjiigfh-Default"] workspace number 10
 assign [class="Code"] workspace number 10 Code
 
 
@@ -295,6 +302,10 @@ exec flatpak run com.dropbox.Client
 exec gtk-launch brave-blgdilankhbcpipclgpdndahbehalgkh-Default
 # Basecamp (Brave PWA)
 exec gtk-launch brave-apieeommpmigoeakncdhabldpejghenk-Default
+# Perplexity (Brave PWA)
+exec gtk-launch brave-kpmdbogdmbfckbgdfdffkleoleokbhod-Default
+# WhatsApp Web (Brave PWA)
+exec gtk-launch brave-hnpfjngllnobngcgfapefoaidbinmjnm-Default
 
 # Window decoration settings
 default_border pixel 0
