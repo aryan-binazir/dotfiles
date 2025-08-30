@@ -83,7 +83,7 @@ parse_git_branch() {
 
 # Custom prompt with colors
 # Format: [user@host dir](git-branch)$ 
-export PS1='\[\033[01;32m\]\u\[\033[00m\]:\[\033[01;34m\]\W\[\033[33m\]$(parse_git_branch)\[\033[00m\]\$ '
+export PS1='\[\033[01;32m\]\u\[\033[00m\] λ \[\033[01;34m\]\W\[\033[33m\]$(parse_git_branch)\[\033[00m\]\$ '
 
 # Enable color support for ls and grep
 if [ -x /usr/bin/dircolors ]; then
