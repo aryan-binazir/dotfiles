@@ -45,6 +45,9 @@ else
     alias vim=nvim
     alias lg=lazygit
     alias repos='cd ~/repos'
+    alias update="sudo dnf update -y && sudo dnf upgrade -y && flatpak update -y && sudo snap refresh && claude update && npm -g update"
+    alias claude="$HOME/.claude/local/claude --dangerously-skip-permissions"
+
     # alias tm='~/.local/bin/tm'
 fi
 
@@ -126,9 +129,8 @@ extract() {
     fi
 }
 
-alias claude="/home/ar/.claude/local/claude"
 
 # For Bottles
 export MOZ_ENABLE_WAYLAND=1
 export QT_QPA_PLATFORM=wayland
-alias update="sudo dnf update -y && sudo dnf upgrade -y && flatpak update -y && sudo snap refresh && claude update && npm -g update"
+

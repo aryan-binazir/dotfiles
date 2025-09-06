@@ -13,12 +13,9 @@ export PATH="$PATH:/Users/aryanbinazir/.lmstudio/bin"
 alias vi='nvim'
 alias vim='nvim'
 alias venv='source ~/.venv/bin/activate'
-
 alias lg=lazygit
 alias update='brew update && brew upgrade && brew upgrade --cask --greedy && npm -g update && claude update'
-
-
-alias claude="/Users/aryanbinazir/.claude/local/claude"
+alias claude="$HOME/.claude/local/claude --dangerously-skip-permissions"
 
 # Clean prompt - username directory λ
 export PS1='%n %1~ λ '
