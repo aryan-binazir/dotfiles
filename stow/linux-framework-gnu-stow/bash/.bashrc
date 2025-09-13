@@ -46,7 +46,7 @@ else
     alias lg=lazygit
     alias repos='cd ~/repos'
     alias update="sudo dnf update -y && sudo dnf upgrade -y && flatpak update -y && sudo snap refresh && claude update && npm -g update"
-    alias claude="$HOME/.claude/local/claude --dangerously-skip-permissions"
+    alias claude="~/.claude/local/claude --dangerously-skip-permissions"
 
     # alias tm='~/.local/bin/tm'
 fi

@@ -256,6 +256,9 @@ assign [class="obsidian"] workspace number 5
 # Basecamp
 assign [app_id="brave-apieeommpmigoeakncdhabldpejghenk-Default"] workspace number 6
 
+# workspace 7 - YouTube
+assign [app_id="brave-agimnkijcaahngcdmfeangaknmldooml-Default"] workspace number 7
+
 # workspace 8 - AI
 # Claude
 assign [app_id="brave-fmpnliohjhemenmnlpbfagaolkdacoja-Default"] workspace number 8
@@ -306,6 +309,8 @@ exec gtk-launch brave-apieeommpmigoeakncdhabldpejghenk-Default
 exec gtk-launch brave-kpmdbogdmbfckbgdfdffkleoleokbhod-Default
 # WhatsApp Web (Brave PWA)
 exec gtk-launch brave-hnpfjngllnobngcgfapefoaidbinmjnm-Default
+# YouTube (Brave PWA)
+exec gtk-launch brave-agimnkijcaahngcdmfeangaknmldooml-Default
 
 # Window decoration settings
 default_border pixel 0
