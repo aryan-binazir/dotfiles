@@ -1,0 +1,14 @@
+#!/bin/bash
+
+case "$1" in
+    start)
+        sudo systemctl stop udevmon
+        ;;
+    stop)
+        sudo systemctl start udevmon
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}"
+        exit 1
+        ;;
+esac
