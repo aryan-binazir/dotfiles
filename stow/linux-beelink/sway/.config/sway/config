@@ -266,7 +266,7 @@ assign [app_id="brave-cadlkienfkclaiaibeoongdcgmdikeeg-Default"] workspace numbe
 # Gemini
 assign [app_id="brave-gdfaincndogidkdcdkhapmbffkckdkhn-Default"] workspace number 8
 # Perplexity
-assign [app_id="brave-kpmdbogdmbfckbgdfdffkleoleokbhod-Default"] workspace number 8
+assign [app_id="brave-lnlpinjmddpgbambkfjpbkoigmgcdjjm-Default"] workspace number 8
 # T3 Chat
 assign [app_id="brave-ihhigimjhmcaaaimfbkfipehncfnkipi-Default"] workspace number 8
 
@@ -306,7 +306,7 @@ exec gtk-launch brave-blgdilankhbcpipclgpdndahbehalgkh-Default
 # Basecamp (Brave PWA)
 exec gtk-launch brave-apieeommpmigoeakncdhabldpejghenk-Default
 # Perplexity (Brave PWA)
-exec gtk-launch brave-kpmdbogdmbfckbgdfdffkleoleokbhod-Default
+exec gtk-launch brave-lnlpinjmddpgbambkfjpbkoigmgcdjjm-Default
 # WhatsApp Web (Brave PWA)
 exec gtk-launch brave-hnpfjngllnobngcgfapefoaidbinmjnm-Default
 # YouTube (Brave PWA)
