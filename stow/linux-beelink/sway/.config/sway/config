@@ -253,7 +253,7 @@ assign [app_id="obsidian"] workspace number 5
 assign [class="obsidian"] workspace number 5
 
 # Basecamp
-assign [app_id="brave-apieeommpmigoeakncdhabldpejghenk-Default"] workspace number 6
+assign [app_id="brave-okggjpfbemddcddcijkmhblkofomjkab-Default"] workspace number 6
 
 # workspace 7 - YouTube
 assign [app_id="brave-agimnkijcaahngcdmfeangaknmldooml-Default"] workspace number 7
@@ -264,11 +264,9 @@ assign [app_id="brave-fmpnliohjhemenmnlpbfagaolkdacoja-Default"] workspace numbe
 # ChatGPT
 assign [app_id="brave-cadlkienfkclaiaibeoongdcgmdikeeg-Default"] workspace number 8
 # Gemini
-assign [app_id="brave-gdfaincndogidkdcdkhapmbffkckdkhn-Default"] workspace number 8
+assign [app_id="brave-Google_Gemini"] workspace number 8
 # Perplexity
 assign [app_id="brave-lnlpinjmddpgbambkfjpbkoigmgcdjjm-Default"] workspace number 8
-# T3 Chat
-assign [app_id="brave-ihhigimjhmcaaaimfbkfipehncfnkipi-Default"] workspace number 8
 
 # workspace 9 - communication
 # WhatsApp Web
@@ -287,8 +285,8 @@ assign [app_id="brave-fogdafpmmgpnmghcijkcojahicohbooc-Default"] workspace numbe
 assign [title="Google Calendar"] workspace number 10
 # Apple Music
 assign [app_id="brave-blgdilankhbcpipclgpdndahbehalgkh-Default"] workspace number 10
-# Apple Notes (Brave PWA)
-assign [app_id="brave-hdbfcilmnlkoiempgdfpifdnhnjiigfh-Default"] workspace number 10
+# Reminders
+assign [app_id="brave-agedgfbdadefbodjkkkcpihgcmibpcff-Default"] workspace number 10
 assign [class="Code"] workspace number 10 Code
 
 
@@ -296,7 +294,7 @@ assign [class="Code"] workspace number 10 Code
 exec kanshi
 exec thunderbird
 exec ghostty
-exec brave-browser
+exec /usr/bin/brave-browser
 # exec flatpak run app.zen_browser.zen
 exec flatpak run md.obsidian.Obsidian
 exec flatpak run com.slack.Slack
@@ -304,7 +302,7 @@ exec flatpak run com.dropbox.Client
 # Apple Music (Brave PWA)
 exec gtk-launch brave-blgdilankhbcpipclgpdndahbehalgkh-Default
 # Basecamp (Brave PWA)
-exec gtk-launch brave-apieeommpmigoeakncdhabldpejghenk-Default
+exec gtk-launch brave-okggjpfbemddcddcijkmhblkofomjkab-Default
 # Perplexity (Brave PWA)
 exec gtk-launch brave-lnlpinjmddpgbambkfjpbkoigmgcdjjm-Default
 # WhatsApp Web (Brave PWA)
