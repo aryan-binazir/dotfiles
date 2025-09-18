@@ -256,8 +256,10 @@ assign [class="obsidian"] workspace number 5
 # Basecamp
 assign [app_id="brave-apieeommpmigoeakncdhabldpejghenk-Default"] workspace number 6
 
-# workspace 7 - YouTube
+# workspace 7 - YouTube & Docker Desktop
 assign [app_id="brave-agimnkijcaahngcdmfeangaknmldooml-Default"] workspace number 7
+assign [app_id="docker-desktop"] workspace number 7
+assign [class="Docker Desktop"] workspace number 7
 
 # workspace 8 - AI
 # Claude
