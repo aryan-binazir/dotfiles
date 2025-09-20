@@ -34,6 +34,11 @@ export VISUAL=nvim
 export BROWSER=firefox
 export TERMINAL=alacritty
 
+# Source API keys from separate file
+if [ -f "$HOME/.api_keys" ]; then
+    source "$HOME/.api_keys"
+fi
+
 # Source aliases from dotfiles if available
 if [ -f "$HOME/repos/dotfiles/other/aliases" ]; then
     source "$HOME/repos/dotfiles/other/aliases"
