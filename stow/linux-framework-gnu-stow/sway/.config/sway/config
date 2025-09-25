@@ -307,8 +307,8 @@ exec flatpak run com.dropbox.Client
 exec gtk-launch brave-blgdilankhbcpipclgpdndahbehalgkh-Default
 # Basecamp (Brave PWA)
 exec gtk-launch brave-apieeommpmigoeakncdhabldpejghenk-Default
-# Perplexity (Brave PWA)
-exec gtk-launch brave-kpmdbogdmbfckbgdfdffkleoleokbhod-Default
+# T3 (Brave PWA)
+exec gtk-launch brave-ihhigimjhmcaaaimfbkfipehncfnkipi-Default
 # WhatsApp Web (Brave PWA)
 exec gtk-launch brave-hnpfjngllnobngcgfapefoaidbinmjnm-Default
 # YouTube (Brave PWA)
