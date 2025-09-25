@@ -1,2 +1,3 @@
 theme = Vesper
 font-size = 18
+keybind = shift+enter=text:\x1b\r

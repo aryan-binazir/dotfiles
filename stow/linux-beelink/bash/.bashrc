@@ -139,3 +139,6 @@ extract() {
 export MOZ_ENABLE_WAYLAND=1
 export QT_QPA_PLATFORM=wayland
 
+
+# opencode
+export PATH=/home/ar/.opencode/bin:$PATH

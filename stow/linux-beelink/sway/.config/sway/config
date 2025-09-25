@@ -257,8 +257,9 @@ assign [class="obsidian"] workspace number 5
 # Basecamp
 assign [app_id="brave-okggjpfbemddcddcijkmhblkofomjkab-Default"] workspace number 6
 
-# workspace 7 - YouTube
+# workspace 7 - YouTube and Docker Desktop
 assign [app_id="brave-agimnkijcaahngcdmfeangaknmldooml-Default"] workspace number 7
+assign [class="Docker Desktop"] workspace number 7
 
 # workspace 8 - AI
 # Claude
@@ -269,6 +270,8 @@ assign [app_id="brave-cadlkienfkclaiaibeoongdcgmdikeeg-Default"] workspace numbe
 assign [app_id="brave-Google_Gemini"] workspace number 8
 # Perplexity
 assign [app_id="brave-lnlpinjmddpgbambkfjpbkoigmgcdjjm-Default"] workspace number 8
+# T3 Chat
+assign [app_id="brave-ihhigimjhmcaaaimfbkfipehncfnkipi-Default"] workspace number 8
 
 # workspace 9 - communication
 # WhatsApp Web
@@ -305,8 +308,8 @@ exec flatpak run com.dropbox.Client
 exec gtk-launch brave-blgdilankhbcpipclgpdndahbehalgkh-Default
 # Basecamp (Brave PWA)
 exec gtk-launch brave-okggjpfbemddcddcijkmhblkofomjkab-Default
-# Perplexity (Brave PWA)
-exec gtk-launch brave-lnlpinjmddpgbambkfjpbkoigmgcdjjm-Default
+# T3 Chat (Brave PWA)
+exec gtk-launch brave-ihhigimjhmcaaaimfbkfipehncfnkipi-Default
 # WhatsApp Web (Brave PWA)
 exec gtk-launch brave-hnpfjngllnobngcgfapefoaidbinmjnm-Default
 # YouTube (Brave PWA)
