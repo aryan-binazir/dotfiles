@@ -14,7 +14,7 @@ alias vi='nvim'
 alias vim='nvim'
 alias venv='source ~/.venv/bin/activate'
 alias lg=lazygit
-alias update='brew update && brew upgrade && brew upgrade --cask --greedy && npm -g update && claude update'
+alias update='brew update && brew upgrade && brew upgrade --cask --greedy && npm -g update && claude update && npm -g update'
 alias claude="~/.claude/local/claude --dangerously-skip-permissions"
 
 # Clean prompt - username directory λ
