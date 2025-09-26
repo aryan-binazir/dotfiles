@@ -255,7 +255,7 @@ assign [app_id="obsidian"] workspace number 5
 assign [class="obsidian"] workspace number 5
 
 # Basecamp
-assign [app_id="brave-okggjpfbemddcddcijkmhblkofomjkab-Default"] workspace number 6
+assign [app_id="brave-ijbgeooaanmapjndajkllhcjbjpmnhhp-Default"] workspace number 6
 
 # workspace 7 - YouTube and Docker Desktop
 assign [app_id="brave-agimnkijcaahngcdmfeangaknmldooml-Default"] workspace number 7
@@ -283,7 +283,7 @@ assign [class="Slack"] workspace number 9
 assign [app_id="thunar"] workspace number 10
 assign [class="zoom"] workspace number 10
 # YNAB
-assign [app_id="brave-ppapbcehlphjebahihpfcobkeifkbhcl-Default"] workspace number 10
+assign [title="YNAB"] workspace number 10
 # Quicken
 assign [app_id="brave-fogdafpmmgpnmghcijkcojahicohbooc-Default"] workspace number 10
 # Google Calendar
@@ -292,6 +292,8 @@ assign [title="Google Calendar"] workspace number 10
 assign [app_id="brave-blgdilankhbcpipclgpdndahbehalgkh-Default"] workspace number 10
 # Reminders
 assign [app_id="brave-agedgfbdadefbodjkkkcpihgcmibpcff-Default"] workspace number 10
+# iCloud Reminders
+assign [app_id="brave-nffepbmcpdbglihcidhnbefejbophemm-Default"] workspace number 10
 assign [class="Code"] workspace number 10 Code
 
 
@@ -307,13 +309,17 @@ exec flatpak run com.dropbox.Client
 # Apple Music (Brave PWA)
 exec gtk-launch brave-blgdilankhbcpipclgpdndahbehalgkh-Default
 # Basecamp (Brave PWA)
-exec gtk-launch brave-okggjpfbemddcddcijkmhblkofomjkab-Default
+exec gtk-launch brave-ijbgeooaanmapjndajkllhcjbjpmnhhp-Default
 # T3 Chat (Brave PWA)
 exec gtk-launch brave-ihhigimjhmcaaaimfbkfipehncfnkipi-Default
 # WhatsApp Web (Brave PWA)
 exec gtk-launch brave-hnpfjngllnobngcgfapefoaidbinmjnm-Default
 # YouTube (Brave PWA)
 exec gtk-launch brave-agimnkijcaahngcdmfeangaknmldooml-Default
+# Quicken (Brave PWA)
+exec gtk-launch brave-fogdafpmmgpnmghcijkcojahicohbooc-Default
+# YNAB (Brave shortcut)
+exec gtk-launch brave-YNAB
 
 # Window decoration settings
 default_border pixel 0
