@@ -22,3 +22,8 @@ export NVM_DIR="$HOME/.config/nvm"
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 
 
+
+# Added by LM Studio CLI (lms)
+export PATH="$PATH:/home/ar/.lmstudio/bin"
+# End of LM Studio CLI section
+
