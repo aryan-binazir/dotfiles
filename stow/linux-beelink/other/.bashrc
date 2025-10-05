@@ -13,6 +13,7 @@ alias lg='lazygit'
 alias venv='source ~/.venv/bin/activate'
 alias claude='~/.claude/local/claude --dangerously-skip-permissions'
 alias update='sudo pacman -Syu && claude update && npm -g update'
+alias updateYay='yay -Syu && claude update && npm -g update'
 
 # Re-enable hashing before loading NVM (fixes "hash: hashing disabled" error)
 set -h
