@@ -10,6 +10,8 @@ source ~/.local/share/omarchy/default/bash/rc
 alias vi='nvim'
 alias vim='nvim'
 alias lg='lazygit'
+alias venv='source ~/.venv/bin/activate'
+alias claude='~/.claude/local/claude --dangerously-skip-permissions'
 alias update='sudo pacman -Syu && claude update && npm -g update'
 
 # Re-enable hashing before loading NVM (fixes "hash: hashing disabled" error)
@@ -18,3 +20,5 @@ set -h
 export NVM_DIR="$HOME/.config/nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+
+
