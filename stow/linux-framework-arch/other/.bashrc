@@ -13,8 +13,8 @@ alias lg='lazygit'
 alias venv='source ~/.venv/bin/activate'
 alias cc='~/.claude/local/claude --dangerously-skip-permissions'
 alias c='codex --search'
-alias update='sudo pacman -Syu && claude update && npm -g update'
-alias updateYay='yay -Syu && claude update && npm -g update'
+alias update='sudo pacman -Syu && claude update && npm install -g @openai/codex@latest'
+alias updateYay='yay -Syu && claude update && npm install -g @openai/codex@latest'
 
 # Re-enable hashing before loading NVM (fixes "hash: hashing disabled" error)
 set -h
