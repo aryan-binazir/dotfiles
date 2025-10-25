@@ -1,3 +1,6 @@
+# If not running interactively, don't do anything (leave this at the top of this file)
+[[ $- != *i* ]] && return
+
 # All the default Omarchy aliases and functions
 # (don't mess with these directly, just overwrite them here!)
 source ~/.local/share/omarchy/default/bash/rc
@@ -11,6 +14,7 @@ alias vi='nvim'
 alias vim='nvim'
 alias lg='lazygit'
 alias venv='source ~/.venv/bin/activate'
+alias claude="/home/ar/.claude/local/claude"
 alias cc='claude --dangerously-skip-permissions'
 alias c='codex --search'
 alias update='sudo pacman -Syu && claude update && npm install -g @openai/codex@latest'
@@ -28,3 +32,4 @@ export NVM_DIR="$HOME/.config/nvm"
 # Added by LM Studio CLI (lms)
 export PATH="$PATH:/home/ar/.lmstudio/bin"
 # End of LM Studio CLI section
+
