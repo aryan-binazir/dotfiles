@@ -14,11 +14,11 @@ alias vi='nvim'
 alias vim='nvim'
 alias venv='source ~/.venv/bin/activate'
 alias lg=lazygit
-alias update='brew update && brew upgrade && brew upgrade --cask --greedy && npm install -g @openai/codex@latest && claude update && npm install -g @openai/codex@latest'
-alias cc='~/.claude/local/claude --dangerously-skip-permissions'
+alias update='brew update && brew upgrade && brew upgrade --cask --greedy && npm -g update && claude update && npm -g update'
+alias cc='claude --dangerously-skip-permissions'
 alias c='codex --search'
 
 # Clean prompt - username directory λ
 export PS1='%n %1~ λ '
 export EDITOR=nvim
-alias edit="nvim"
+export PATH="$HOME/.local/bin:$PATH"
