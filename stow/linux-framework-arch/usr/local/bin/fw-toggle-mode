@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Framework 13 Mode Toggle
+# Switches between Docked (external display, caps2esc OFF) and Laptop (internal display, caps2esc ON)
+#
+# Setup: Run this command to enable passwordless udevmon control:
+#   echo 'ar ALL=(ALL) NOPASSWD: /usr/bin/systemctl start udevmon, /usr/bin/systemctl stop udevmon' | sudo tee /etc/sudoers.d/fw-toggle-mode && sudo chmod 440 /etc/sudoers.d/fw-toggle-mode
+
+STATE_FILE="${XDG_CACHE_HOME:-$HOME/.cache}/fw-mode"
+INTERNAL_MONITOR="eDP-1"
+
+notify() {
+    local msg="$1"
+    echo "$msg"
+    command -v notify-send &>/dev/null && notify-send -t 3000 "Mode Toggle" "$msg" || true
+}
+
+get_external_monitor() {
+    # Find first non-internal monitor (including disabled ones)
+    hyprctl monitors all -j | jq -r '.[] | select(.name != "'"$INTERNAL_MONITOR"'") | .name' | head -1
+}
+
+get_current_mode() {
+    if [[ -f "$STATE_FILE" ]]; then
+        cat "$STATE_FILE"
+    else
+        # Infer from current state: if internal is disabled, we're docked
+        local internal_disabled
+        internal_disabled=$(hyprctl monitors all -j | jq -r '.[] | select(.name == "'"$INTERNAL_MONITOR"'") | .disabled')
+        if [[ "$internal_disabled" == "true" ]]; then
+            echo "docked"
+        else
+            echo "laptop"
+        fi
+    fi
+}
+
+enable_monitor() {
+    local mon="$1"
+    # Enable with scale 2 (matching monitors.conf)
+    hyprctl keyword monitor "$mon,preferred,auto,2"
+}
+
+disable_monitor() {
+    local mon="$1"
+    hyprctl keyword monitor "$mon,disable"
+}
+
+caps2esc_on() {
+    sudo systemctl start udevmon
+}
+
+caps2esc_off() {
+    sudo systemctl stop udevmon
+}
+
+switch_to_docked() {
+    local external
+    external=$(get_external_monitor)
+
+    if [[ -z "$external" ]]; then
+        notify "No external monitor detected. Staying in laptop mode."
+        echo "laptop" > "$STATE_FILE"
+        exit 1
+    fi
+
+    # Enable external, disable internal
+    enable_monitor "$external"
+    sleep 0.5  # Give Hyprland time to switch
+    disable_monitor "$INTERNAL_MONITOR"
+
+    # caps2esc OFF for desktop use
+    caps2esc_off
+
+    echo "docked" > "$STATE_FILE"
+    notify "Docked mode: $external active, caps2esc OFF"
+}
+
+switch_to_laptop() {
+    # Enable internal display
+    enable_monitor "$INTERNAL_MONITOR"
+
+    # Disable any external monitors
+    local external
+    external=$(get_external_monitor)
+    if [[ -n "$external" ]]; then
+        sleep 0.5
+        disable_monitor "$external"
+    fi
+
+    # caps2esc ON for laptop use
+    caps2esc_on
+
+    echo "laptop" > "$STATE_FILE"
+    notify "Laptop mode: $INTERNAL_MONITOR active, caps2esc ON"
+}
+
+main() {
+    local current_mode
+    current_mode=$(get_current_mode)
+
+    case "$current_mode" in
+        docked)
+            switch_to_laptop
+            ;;
+        laptop)
+            switch_to_docked
+            ;;
+        *)
+            # Unknown state, default to laptop
+            switch_to_laptop
+            ;;
+    esac
+}
+
+main "$@"
