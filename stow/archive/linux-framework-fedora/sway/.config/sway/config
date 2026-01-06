@@ -266,12 +266,6 @@ assign [class="Docker Desktop"] workspace number 7
 assign [app_id="brave-fmpnliohjhemenmnlpbfagaolkdacoja-Default"] workspace number 8
 # ChatGPT
 assign [app_id="brave-cadlkienfkclaiaibeoongdcgmdikeeg-Default"] workspace number 8
-# Gemini
-assign [app_id="brave-gdfaincndogidkdcdkhapmbffkckdkhn-Default"] workspace number 8
-# Perplexity
-assign [app_id="brave-kpmdbogdmbfckbgdfdffkleoleokbhod-Default"] workspace number 8
-# T3 Chat
-assign [app_id="brave-ihhigimjhmcaaaimfbkfipehncfnkipi-Default"] workspace number 8
 
 # workspace 9 - communication
 # WhatsApp Web
