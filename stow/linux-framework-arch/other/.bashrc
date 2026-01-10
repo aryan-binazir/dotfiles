@@ -17,6 +17,8 @@ alias venv='source ~/.venv/bin/activate'
 alias claude='~/.claude/local/claude'
 alias cc='claude --dangerously-skip-permissions'
 alias c='codex --search'
+alias cur='cursor-agent'
+alias oc='opencode'
 alias update='sudo pacman -Syu && claude update && npm install -g @openai/codex@latest'
 alias updateYay='yay -Syu && claude update && npm install -g @openai/codex@latest'
 
