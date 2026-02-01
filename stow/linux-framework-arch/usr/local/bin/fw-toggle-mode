@@ -60,9 +60,8 @@ switch_to_docked() {
     external=$(get_external_monitor)
 
     if [[ -z "$external" ]]; then
-        notify "No external monitor detected. Staying in laptop mode."
-        echo "laptop" > "$STATE_FILE"
-        exit 1
+        switch_to_laptop "No external monitor detected; forcing laptop mode."
+        return 0
     fi
 
     # Enable external, disable internal
@@ -78,6 +77,7 @@ switch_to_docked() {
 }
 
 switch_to_laptop() {
+    local reason="${1:-}"
     # Enable internal display
     enable_monitor "$INTERNAL_MONITOR"
 
@@ -93,7 +93,11 @@ switch_to_laptop() {
     caps2esc_on
 
     echo "laptop" > "$STATE_FILE"
-    notify "Laptop mode: $INTERNAL_MONITOR active, caps2esc ON"
+    if [[ -n "$reason" ]]; then
+        notify "$reason (Laptop mode: $INTERNAL_MONITOR active, caps2esc ON)"
+    else
+        notify "Laptop mode: $INTERNAL_MONITOR active, caps2esc ON"
+    fi
 }
 
 main() {
