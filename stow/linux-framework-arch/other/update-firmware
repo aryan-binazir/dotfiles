@@ -1,0 +1,46 @@
+#!/bin/bash
+
+check_only=false
+force=false
+for arg in "$@"; do
+    case "$arg" in
+        --check|-c) check_only=true ;;
+        --force|-f) force=true ;;
+    esac
+done
+
+if ! command -v fwupdmgr &>/dev/null; then
+    echo "fwupdmgr not found. Install fwupd first."
+    exit 1
+fi
+
+echo "Refreshing firmware metadata..."
+fwupdmgr refresh --force
+
+echo ""
+echo "Checking for updates..."
+if ! fwupdmgr get-updates 2>/dev/null; then
+    echo "No firmware updates available."
+    exit 0
+fi
+
+if $check_only; then
+    exit 0
+fi
+
+if $force; then
+    echo ""
+    fwupdmgr update
+    echo ""
+    echo "Reboot to complete the update."
+else
+    echo ""
+    read -rp "Apply updates? [y/N] " confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        fwupdmgr update
+        echo ""
+        echo "Reboot to complete the update."
+    else
+        echo "Aborted."
+    fi
+fi
