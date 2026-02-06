@@ -5,6 +5,9 @@
 # (don't mess with these directly, just overwrite them here!)
 source ~/.local/share/omarchy/default/bash/rc
 
+# Load local API keys if present
+[ -f "$HOME/.api_keys" ] && source "$HOME/.api_keys"
+
 # Add your own exports, aliases, and functions here.
 #
 # Make an alias for invoking commands you use constantly
@@ -15,7 +18,8 @@ alias lg='lazygit'
 alias venv='source ~/.venv/bin/activate'
 # alias claude='~/.claude/local/claude'
 alias cc='claude --dangerously-skip-permissions'
-# alias c='codex --search'
+alias cdx='codex --search --dangerously-bypass-approvals-and-sandbox
+'
 alias update='sudo pacman -Syu && claude update'
 alias updateYay='yay -Syu && claude update'
 
