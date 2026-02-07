@@ -18,7 +18,7 @@ alias lg='lazygit'
 alias venv='source ~/.venv/bin/activate'
 # alias claude='~/.claude/local/claude'
 alias cc='claude --dangerously-skip-permissions'
-alias cdx='codex --search --dangerously-bypass-approvals-and-sandbox
+alias cdx='codex --dangerously-bypass-approvals-and-sandbox
 '
 alias update='sudo pacman -Syu && claude update'
 alias updateYay='yay -Syu && claude update'
