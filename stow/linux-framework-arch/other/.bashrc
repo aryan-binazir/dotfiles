@@ -11,7 +11,6 @@ source ~/.local/share/omarchy/default/bash/rc
 # Add your own exports, aliases, and functions here.
 #
 # Make an alias for invoking commands you use constantly
-# add venv
 alias vi='nvim'
 alias vim='nvim'
 alias lg='lazygit'
@@ -19,8 +18,9 @@ alias venv='source ~/.venv/bin/activate'
 alias acc='claude --dangerously-skip-permissions'
 alias acd='codex --dangerously-bypass-approvals-and-sandbox'
 alias aco='opencode'
-alias update='sudo pacman -Syu && claude update'
-alias updateYay='yay -Syu && claude update'
+alias claude='/usr/bin/claude'
+# alias update='sudo paru -Syu && claude update'
+# alias updateYay='yay -Syu && claude update'
 
 # Re-enable hashing before loading NVM (fixes "hash: hashing disabled" error)
 set -h
