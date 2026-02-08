@@ -17,9 +17,9 @@ alias vim='nvim'
 alias lg='lazygit'
 alias venv='source ~/.venv/bin/activate'
 # alias claude='~/.claude/local/claude'
-alias cc='claude --dangerously-skip-permissions'
-alias cdx='codex --dangerously-bypass-approvals-and-sandbox
-'
+alias acc='claude --dangerously-skip-permissions'
+alias acd='codex --dangerously-bypass-approvals-and-sandbox'
+alias aco='opencode'
 alias update='sudo pacman -Syu && claude update'
 alias updateYay='yay -Syu && claude update'
 
