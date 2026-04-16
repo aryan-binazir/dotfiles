@@ -16,7 +16,7 @@ alias vim='nvim'
 alias lg='lazygit'
 alias venv='source ~/.venv/bin/activate'
 alias acc='claude --dangerously-skip-permissions'
-alias acd='codex --dangerously-bypass-approvals-and-sandbox'
+alias acd='codex --yolo'
 alias aco='opencode'
 alias claude='/usr/bin/claude'
 # alias update='sudo paru -Syu && claude update'
@@ -34,3 +34,5 @@ export GOPATH="$HOME/go"
 export PATH="$GOPATH/bin:$PATH"
 
 export PATH="$HOME/.local/bin:$PATH"
+
+alias linuxbox='ssh ar@192.168.86.64'
