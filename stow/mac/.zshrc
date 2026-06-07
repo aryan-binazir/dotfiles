@@ -7,6 +7,7 @@ alias acud='cursor-agent --force'
 alias aco='opencode'
 alias acod='opencode --yolo'
 alias lg='lazygit'
+alias linuxbox='ssh ar@192.168.86.45'
 gb() { git fetch && git checkout "$1" && git pull && shift && for cmd in "$@"; do eval "$cmd"; done; }
 alias update='brew update && brew upgrade && brew upgrade --cask --greedy && acc update && sync_skills'
 alias venv='source ~/.venv/bin/activate'
