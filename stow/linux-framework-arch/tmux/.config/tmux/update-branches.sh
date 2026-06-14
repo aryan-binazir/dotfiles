@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/bin/bash
 
 set -u
 
@@ -22,7 +22,8 @@ git_branch() {
 			break
 		fi
 
-		parent=${dir:h}
+		parent=${dir%/*}
+		[[ -n $parent ]] || parent=/
 		[[ $parent == $dir ]] && return 1
 		dir=$parent
 	done
@@ -35,17 +36,17 @@ git_branch() {
 	elif [[ $head == "ref: "* ]]; then
 		REPLY=${head#ref: }
 	elif [[ -n $head ]]; then
-		REPLY="detached:${head[1,7]}"
+		REPLY="detached:${head:0:7}"
 	else
 		return 1
 	fi
 }
 
-typeset -a tmux_cmd
+declare -a tmux_cmd=()
 
 while IFS=$'\t' read -r session_id session_path; do
 	[[ -n $session_id ]] || continue
-	(( ${#tmux_cmd} )) && tmux_cmd+=(\;)
+	(( ${#tmux_cmd[@]} )) && tmux_cmd+=(\;)
 
 	if [[ -d $session_path ]] && git_branch "$session_path"; then
 		tmux_cmd+=(set-option -q -t "$session_id" @branch "$REPLY")
@@ -54,4 +55,4 @@ while IFS=$'\t' read -r session_id session_path; do
 	fi
 done < <(tmux list-sessions -F $'#{session_id}\t#{session_path}' 2>/dev/null)
 
-(( ${#tmux_cmd} )) && tmux "${tmux_cmd[@]}" >/dev/null 2>&1
+(( ${#tmux_cmd[@]} )) && tmux "${tmux_cmd[@]}" >/dev/null 2>&1
