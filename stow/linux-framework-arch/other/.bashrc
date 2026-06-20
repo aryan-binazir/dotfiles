@@ -10,6 +10,11 @@ source ~/.local/share/omarchy/default/bash/rc
 
 # Add your own exports, aliases, and functions here.
 #
+# Point interactive shells at the systemd user ssh-agent.
+if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+  export SSH_AUTH_SOCK="$XDG_RUNTIME_DIR/ssh-agent.socket"
+fi
+
 # Make an alias for invoking commands you use constantly
 alias vi='nvim'
 alias vim='nvim'
