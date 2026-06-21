@@ -1,0 +1,82 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
+
+import subprocess
+import sys
+
+
+AGENT_COMMANDS = {
+    "acc": ["claude", "--dangerously-skip-permissions"],
+    "acd": ["codex", "--yolo"],
+    "acu": ["cursor-agent", "--force"],
+}
+
+
+def run(argv: list[str]) -> int:
+    return subprocess.run(argv).returncode
+
+
+def status_porcelain() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "status", "--porcelain"],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+
+
+def run_zsh(command: str) -> int:
+    return subprocess.run(["zsh", "-ic", command]).returncode
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if not args:
+        branch = "main"
+        commands = []
+    elif args[0] in AGENT_COMMANDS:
+        branch = "main"
+        commands = args
+    else:
+        branch = args[0]
+        commands = args[1:]
+
+    status = run(["git", "fetch"])
+    if status != 0:
+        return status
+
+    worktree_status = status_porcelain()
+    if worktree_status.returncode != 0:
+        return worktree_status.returncode
+
+    if worktree_status.stdout:
+        status = run(
+            [
+                "git",
+                "stash",
+                "push",
+                "--include-untracked",
+                "-m",
+                f"gb auto-stash before checkout {branch}",
+            ]
+        )
+        if status != 0:
+            return status
+
+    for argv in (["git", "checkout", branch], ["git", "pull"]):
+        status = run(argv)
+        if status != 0:
+            return status
+
+    for command in commands:
+        status = run(AGENT_COMMANDS[command]) if command in AGENT_COMMANDS else run_zsh(command)
+        if status != 0:
+            return status
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
