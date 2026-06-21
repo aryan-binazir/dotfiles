@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 SKILLS_REPO = Path("~/repos/skills").expanduser()
-TARGET_DIR = Path("~/repos/cc-config/skills").expanduser()
+TARGET_DIR = Path("~/repos/cc-config/skills/sym_linked").expanduser()
 SOURCE_DIRS = [
     SKILLS_REPO / "skills" / "engineering",
     SKILLS_REPO / "skills" / "productivity",
