@@ -1,0 +1,81 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
+
+from pathlib import Path
+import os
+import shutil
+import subprocess
+import sys
+
+
+REPOS_DIR = Path(os.environ.get("REPOS_DIR", Path.home() / "repos")).expanduser()
+TS_REPO = REPOS_DIR / "bball-lab-ts"
+GO_REPO = REPOS_DIR / "bball-lab-go"
+
+
+def usage() -> str:
+    return "usage: restart_server [dev]"
+
+
+def require_command(name: str) -> int:
+    if shutil.which(name) is None:
+        print(f"Missing required command: {name}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+def require_dir(path: Path) -> int:
+    if not path.is_dir():
+        print(f"Missing repo directory: {path}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+def run_in_repo(repo: Path, argv: list[str]) -> int:
+    print(f"\n==> {repo}")
+    return subprocess.run(argv, cwd=repo).returncode
+
+
+def restart_go_server() -> int:
+    status = run_in_repo(GO_REPO, ["make", "down"])
+    if status != 0:
+        return status
+
+    return run_in_repo(GO_REPO, ["make", "up"])
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if args not in ([], ["dev"]):
+        print(usage(), file=sys.stderr)
+        return 2
+
+    dev = args == ["dev"]
+    required_commands = ("make",) if dev else ("gb", "make")
+
+    for command in required_commands:
+        status = require_command(command)
+        if status != 0:
+            return status
+
+    for repo in (GO_REPO,) if dev else (TS_REPO, GO_REPO):
+        status = require_dir(repo)
+        if status != 0:
+            return status
+
+    if not dev:
+        for repo in (TS_REPO, GO_REPO):
+            status = run_in_repo(repo, ["gb"])
+            if status != 0:
+                return status
+
+    return restart_go_server()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
