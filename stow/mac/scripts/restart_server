@@ -4,6 +4,7 @@
 # dependencies = []
 # ///
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import os
 import shutil
@@ -37,8 +38,19 @@ def require_dir(path: Path) -> int:
 
 
 def run_in_repo(repo: Path, argv: list[str]) -> int:
-    print(f"\n==> {repo}")
+    print(f"\n==> {repo}", flush=True)
     return subprocess.run(argv, cwd=repo).returncode
+
+
+def run_repo_pulls(repos: tuple[Path, ...]) -> int:
+    with ThreadPoolExecutor(max_workers=len(repos)) as executor:
+        statuses = list(executor.map(lambda repo: run_in_repo(repo, ["gb"]), repos))
+
+    for status in statuses:
+        if status != 0:
+            return status
+
+    return 0
 
 
 def restart_go_server() -> int:
@@ -69,10 +81,9 @@ def main() -> int:
             return status
 
     if not dev:
-        for repo in (TS_REPO, GO_REPO):
-            status = run_in_repo(repo, ["gb"])
-            if status != 0:
-                return status
+        status = run_repo_pulls((TS_REPO, GO_REPO))
+        if status != 0:
+            return status
 
     return restart_go_server()
 
