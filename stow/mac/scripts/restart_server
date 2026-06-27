@@ -58,7 +58,11 @@ def restart_go_server() -> int:
     if status != 0:
         return status
 
-    return run_in_repo(GO_REPO, ["make", "up"])
+    status = run_in_repo(GO_REPO, ["make", "up"])
+    if status != 0:
+        return status
+
+    return run_in_repo(GO_REPO, ["make", "fake-up"])
 
 
 def main() -> int:

@@ -57,7 +57,11 @@ func run(args []string) int {
 		return status
 	}
 
-	return runInRepo(goRepo, "make", "up")
+	if status := runInRepo(goRepo, "make", "up"); status != 0 {
+		return status
+	}
+
+	return runInRepo(goRepo, "make", "fake-up")
 }
 
 func runRepoPulls(repos []string) int {
