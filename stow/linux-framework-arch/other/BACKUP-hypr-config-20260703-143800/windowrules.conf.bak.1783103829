@@ -46,7 +46,7 @@ windowrule = workspace 7, match:class chrome-bnppglmjfpalnebkpjnhfflioohnlplp-De
 windowrule = workspace 7, match:class crx_bnppglmjfpalnebkpjnhfflioohnlplp
 
 # T3 Code -> workspace 7
-windowrule = workspace 7, match:class t3code
+windowrule = workspace 8, match:class t3code
 
 # AI web apps (PWAs) -> workspace 8
 # ChatGPT PWA
