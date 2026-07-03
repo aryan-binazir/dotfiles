@@ -44,4 +44,4 @@ export PATH="$GOPATH/bin:$PATH"
 
 export PATH="$HOME/.local/bin:$PATH"
 
-alias linuxbox='ssh ar@192.168.86.45'
+alias box='ssh ar@box.local'
