@@ -12,6 +12,7 @@ from pathlib import Path
 SKILLS_REPO = Path("~/repos/skills").expanduser()
 TARGET_DIR = Path("~/repos/cc-config/skills/sym_linked").expanduser()
 CC_CONFIG_SKILLS_DIR = Path("~/repos/cc-config/skills").expanduser()
+AGENTS_SOURCE = Path("~/repos/cc-config/AGENTS.md").expanduser()
 SOURCE_DIRS = [
     SKILLS_REPO / "skills" / "engineering",
     SKILLS_REPO / "skills" / "productivity",
@@ -20,6 +21,11 @@ APP_SKILL_DIRS = [
     ("codex", Path("~/.codex").expanduser(), Path("~/.codex/skills").expanduser()),
     ("claude", Path("~/.claude").expanduser(), Path("~/.claude/skills").expanduser()),
     ("cursor", Path("~/.cursor").expanduser(), Path("~/.cursor/skills").expanduser()),
+]
+APP_INSTRUCTION_LINKS = [
+    ("codex", Path("~/.codex").expanduser(), Path("~/.codex/AGENTS.md").expanduser()),
+    ("claude", Path("~/.claude").expanduser(), Path("~/.claude/CLAUDE.md").expanduser()),
+    ("cursor", Path("~/.cursor").expanduser(), Path("~/.cursor/AGENTS.md").expanduser()),
 ]
 
 
@@ -176,6 +182,39 @@ def sync_one_skill(source_path: Path, target_path: Path) -> str:
     return "created"
 
 
+def sync_instruction_links() -> None:
+    require_dir(AGENTS_SOURCE.parent, "cc-config directory")
+    if not AGENTS_SOURCE.is_file():
+        raise RuntimeError(f"agents source file does not exist: {AGENTS_SOURCE}")
+
+    print(f"Syncing instruction links from {AGENTS_SOURCE}")
+    counts = {
+        "created": 0,
+        "replaced": 0,
+        "unchanged": 0,
+        "skipped": 0,
+    }
+
+    for app_name, app_dir, target_path in APP_INSTRUCTION_LINKS:
+        if not app_dir.exists():
+            print(f"Skipping {app_name}: app directory does not exist: {app_dir}")
+            continue
+        if not app_dir.is_dir():
+            print(f"Skipping {app_name}: app path is not a directory: {app_dir}")
+            continue
+
+        result = sync_one_skill(AGENTS_SOURCE, target_path)
+        counts[result] += 1
+
+    print(
+        "Instruction links done: "
+        f"{counts['created']} created, "
+        f"{counts['replaced']} replaced, "
+        f"{counts['unchanged']} unchanged, "
+        f"{counts['skipped']} skipped"
+    )
+
+
 def remove_stale_top_level_links(app_skills_dir: Path, desired_names: set[str]) -> int:
     removed = 0
 
@@ -276,6 +315,7 @@ def main() -> int:
     pull_skills()
     symlink_skills()
     sync_app_skill_dirs()
+    sync_instruction_links()
     return 0
 
 
