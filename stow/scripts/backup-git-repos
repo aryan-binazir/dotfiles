@@ -348,9 +348,11 @@ def create_bundle(repo: Path, bundle_path: Path, refs: list[str]) -> None:
     run_git(repo, ["bundle", "create", str(bundle_path), *refs], check=True)
 
 
-def verify_bundle(bundle_path: Path) -> None:
+def verify_bundle(bundle_path: Path, repo: Path) -> None:
+    # Must run with a repository context; bare `git bundle verify` fails when cwd
+    # is not a git repo (e.g. scheduler WorkingDirectory=$HOME).
     result = subprocess.run(
-        ["git", "bundle", "verify", str(bundle_path)],
+        ["git", "-C", str(repo), "bundle", "verify", str(bundle_path)],
         check=False,
         capture_output=True,
         text=True,
@@ -446,7 +448,7 @@ def backup_repository(
         log(f"{repo.name}: creating bundle {final_name}", tz=tz)
         create_bundle(repo.path, temp_path, refs)
         log(f"{repo.name}: verifying bundle", tz=tz)
-        verify_bundle(temp_path)
+        verify_bundle(temp_path, repo.path)
         atomic_publish(temp_path, final_path)
         log(f"{repo.name}: published {final_path}", tz=tz)
     except Exception:
