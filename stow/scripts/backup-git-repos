@@ -1,0 +1,518 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
+"""Deterministic Git bundle backups into a configured code_backups tree."""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+import tomllib
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+# Local-only configuration (repo paths / names live here, not in this script).
+CONFIG_PATH = Path.home() / ".config" / "code_backups" / "config.toml"
+
+DEFAULT_RETENTION_COUNT = 3
+DEFAULT_TIMEZONE = "America/New_York"
+
+# ---------------------------------------------------------------------------
+# Types / helpers
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RepositoryConfig:
+    name: str
+    path: Path
+    destination: str
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    code_backups_root: Path
+    destinations: dict[str, str]
+    repositories: list[RepositoryConfig]
+    retention_count: int = DEFAULT_RETENTION_COUNT
+    timezone: str = DEFAULT_TIMEZONE
+
+
+class BackupError(Exception):
+    """Raised for a single-repository backup failure."""
+
+
+def log(message: str, *, tz: ZoneInfo | None = None) -> None:
+    zone = tz or ZoneInfo(DEFAULT_TIMEZONE)
+    stamp = datetime.now(zone).strftime("%Y-%m-%d %H:%M:%S %Z")
+    print(f"[{stamp}] {message}", flush=True)
+
+
+def today_stamp(*, tz: ZoneInfo | None = None) -> str:
+    zone = tz or ZoneInfo(DEFAULT_TIMEZONE)
+    return datetime.now(zone).strftime("%Y-%m-%d")
+
+
+def bundle_filename(repo_name: str, date_stamp: str) -> str:
+    return f"{repo_name}-{date_stamp}.bundle"
+
+
+def bundle_filename_pattern(repo_name: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"^{re.escape(repo_name)}-(\d{{4}}-\d{{2}}-\d{{2}})\.bundle$"
+    )
+
+
+def matches_bundle_filename(filename: str, repo_name: str) -> bool:
+    return bundle_filename_pattern(repo_name).fullmatch(filename) is not None
+
+
+def parse_bundle_date(filename: str, repo_name: str) -> str | None:
+    match = bundle_filename_pattern(repo_name).fullmatch(filename)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def is_beneath(path: Path, root: Path) -> bool:
+    """Return True if resolved path is root or a descendant of root."""
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def load_config(path: Path = CONFIG_PATH) -> AppConfig:
+    if not path.is_file():
+        raise BackupError(
+            f"Config not found: {path}. Create ~/.config/code_backups/config.toml"
+        )
+    try:
+        with path.open("rb") as fh:
+            raw = tomllib.load(fh)
+    except tomllib.TOMLDecodeError as exc:
+        raise BackupError(f"Invalid TOML in {path}: {exc}") from exc
+
+    root_raw = raw.get("code_backups_root")
+    if not isinstance(root_raw, str) or not root_raw.strip():
+        raise BackupError("config code_backups_root must be a non-empty string")
+    code_backups_root = Path(root_raw).expanduser()
+
+    destinations_raw = raw.get("destinations", {})
+    if not isinstance(destinations_raw, dict) or not destinations_raw:
+        raise BackupError("config destinations must be a non-empty table")
+    destinations: dict[str, str] = {}
+    for key, value in destinations_raw.items():
+        if not isinstance(key, str) or not key:
+            raise BackupError(f"Invalid destination key: {key!r}")
+        if not isinstance(value, str) or not value:
+            raise BackupError(f"Invalid destination value for {key!r}: {value!r}")
+        destinations[key] = value
+
+    repos_raw = raw.get("repositories", [])
+    if not isinstance(repos_raw, list) or not repos_raw:
+        raise BackupError("config repositories must be a non-empty array")
+
+    retention = raw.get("retention_count", DEFAULT_RETENTION_COUNT)
+    if not isinstance(retention, int) or isinstance(retention, bool) or retention < 1:
+        raise BackupError("config retention_count must be a positive integer")
+
+    timezone = raw.get("timezone", DEFAULT_TIMEZONE)
+    if not isinstance(timezone, str) or not timezone.strip():
+        raise BackupError("config timezone must be a non-empty string")
+    # Validate timezone name early.
+    ZoneInfo(timezone)
+
+    repositories = load_repositories(repos_raw, destinations=destinations)
+    return AppConfig(
+        code_backups_root=code_backups_root,
+        destinations=destinations,
+        repositories=repositories,
+        retention_count=retention,
+        timezone=timezone,
+    )
+
+
+def load_repositories(
+    raw: list[object],
+    *,
+    destinations: dict[str, str],
+) -> list[RepositoryConfig]:
+    repos: list[RepositoryConfig] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise BackupError(f"Invalid repository entry: {item!r}")
+        name = item.get("name")
+        path_raw = item.get("path")
+        destination = item.get("destination")
+        if not isinstance(name, str) or not name:
+            raise BackupError(f"Invalid repository name: {name!r}")
+        if not isinstance(path_raw, str) or not path_raw.strip():
+            raise BackupError(f"Repository path must be a non-empty string: {name}")
+        path = Path(path_raw).expanduser()
+        if not isinstance(destination, str) or not destination:
+            raise BackupError(f"Invalid destination key for {name}: {destination!r}")
+        if destination not in destinations:
+            raise BackupError(
+                f"Unknown destination {destination!r} for repository {name}"
+            )
+        repos.append(RepositoryConfig(name=name, path=path, destination=destination))
+    return repos
+
+
+def resolve_destination_dir(
+    code_backups_root: Path,
+    destination_key: str,
+    destinations: dict[str, str],
+) -> Path:
+    if destination_key not in destinations:
+        raise BackupError(f"Unknown destination key: {destination_key!r}")
+    rel = destinations[destination_key]
+    if not rel or rel.startswith("/") or ".." in Path(rel).parts:
+        raise BackupError(f"Refusing unsafe destination path: {rel!r}")
+
+    root = code_backups_root.resolve()
+    dest = (root / rel).resolve()
+    if not is_beneath(dest, root):
+        raise BackupError(
+            f"Destination escapes code_backups root: {dest} (root={root})"
+        )
+    return dest
+
+
+def assert_deletable_bundle(
+    path: Path,
+    *,
+    code_backups_root: Path,
+    repo_name: str,
+) -> Path:
+    """Validate a path is a safe-to-delete bundle file; return resolved path."""
+    root = code_backups_root.resolve()
+    resolved = path.resolve()
+
+    if not is_beneath(resolved, root):
+        raise BackupError(
+            f"Refusing to delete outside code_backups: {resolved} (root={root})"
+        )
+    if resolved == root:
+        raise BackupError(f"Refusing to delete code_backups root: {resolved}")
+    if not resolved.is_file():
+        raise BackupError(f"Refusing to delete non-file path: {resolved}")
+    if resolved.is_symlink():
+        raise BackupError(f"Refusing to delete symlink: {resolved}")
+    if not matches_bundle_filename(resolved.name, repo_name):
+        raise BackupError(
+            f"Refusing to delete file not matching {repo_name} bundle pattern: "
+            f"{resolved.name}"
+        )
+    return resolved
+
+
+def list_verified_bundles_for_repo(
+    destination_dir: Path,
+    repo_name: str,
+) -> list[Path]:
+    """List bundle files for repo_name in destination_dir (name-date match only)."""
+    if not destination_dir.is_dir():
+        return []
+    bundles: list[tuple[str, Path]] = []
+    for entry in destination_dir.iterdir():
+        if not entry.is_file():
+            continue
+        date_stamp = parse_bundle_date(entry.name, repo_name)
+        if date_stamp is None:
+            continue
+        bundles.append((date_stamp, entry))
+    bundles.sort(key=lambda item: item[0], reverse=True)
+    return [path for _, path in bundles]
+
+
+def bundles_to_delete(
+    bundles_newest_first: list[Path],
+    retention_count: int = DEFAULT_RETENTION_COUNT,
+) -> list[Path]:
+    if retention_count < 0:
+        raise BackupError(f"Invalid retention_count: {retention_count}")
+    if len(bundles_newest_first) <= retention_count:
+        return []
+    return bundles_newest_first[retention_count:]
+
+
+def safe_unlink_bundle(
+    path: Path,
+    *,
+    code_backups_root: Path,
+    repo_name: str,
+) -> None:
+    resolved = assert_deletable_bundle(
+        path, code_backups_root=code_backups_root, repo_name=repo_name
+    )
+    # Never recursive; unlink this single file only.
+    resolved.unlink()
+
+
+def run_git(
+    repo: Path,
+    args: list[str],
+    *,
+    check: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    cmd = ["git", "-C", str(repo), *args]
+    result = subprocess.run(
+        cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+        shell=False,
+    )
+    if check and result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise BackupError(
+            f"git {' '.join(args)} failed in {repo} "
+            f"(exit {result.returncode}): {detail}"
+        )
+    return result
+
+
+def validate_git_repo(path: Path) -> None:
+    if not path.exists():
+        raise BackupError(f"Repository path does not exist: {path}")
+    if not path.is_dir():
+        raise BackupError(f"Repository path is not a directory: {path}")
+    result = run_git(path, ["rev-parse", "--is-inside-work-tree"])
+    if result.returncode != 0 or result.stdout.strip() != "true":
+        raise BackupError(f"Not a Git repository: {path}")
+
+
+def fetch_origin_main(repo: Path) -> None:
+    # Intentionally no --prune. Failure must abort before any backup or retention.
+    result = run_git(repo, ["fetch", "origin", "main"], check=False)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise BackupError(
+            f"fetch origin main failed (no backup, no retention): {detail}"
+        )
+
+
+def confirm_origin_main(repo: Path) -> None:
+    result = run_git(repo, ["rev-parse", "--verify", "refs/remotes/origin/main"])
+    if result.returncode != 0:
+        raise BackupError(
+            f"origin/main missing after fetch (no backup, no retention) in {repo}"
+        )
+
+
+def collect_bundle_refs(repo: Path) -> list[str]:
+    refs = ["refs/remotes/origin/main"]
+
+    branches = run_git(
+        repo,
+        ["for-each-ref", "--format=%(refname)", "refs/heads"],
+        check=True,
+    )
+    for line in branches.stdout.splitlines():
+        ref = line.strip()
+        if ref:
+            refs.append(ref)
+
+    tags = run_git(
+        repo,
+        ["for-each-ref", "--format=%(refname)", "refs/tags"],
+        check=True,
+    )
+    for line in tags.stdout.splitlines():
+        ref = line.strip()
+        if ref:
+            refs.append(ref)
+
+    # Preserve order but drop duplicates.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for ref in refs:
+        if ref not in seen:
+            seen.add(ref)
+            unique.append(ref)
+    return unique
+
+
+def create_bundle(repo: Path, bundle_path: Path, refs: list[str]) -> None:
+    if not refs:
+        raise BackupError(f"No refs to bundle for {repo}")
+    run_git(repo, ["bundle", "create", str(bundle_path), *refs], check=True)
+
+
+def verify_bundle(bundle_path: Path) -> None:
+    result = subprocess.run(
+        ["git", "bundle", "verify", str(bundle_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        shell=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise BackupError(f"Bundle verification failed for {bundle_path}: {detail}")
+
+
+def atomic_publish(temp_path: Path, final_path: Path) -> None:
+    """Publish temp → final without overwriting an existing final name."""
+    if final_path.exists():
+        raise BackupError(f"Bundle already exists (will not overwrite): {final_path}")
+    try:
+        # link fails with FileExistsError if final appears; does not overwrite.
+        os.link(temp_path, final_path)
+    except FileExistsError as exc:
+        raise BackupError(
+            f"Bundle already exists (will not overwrite): {final_path}"
+        ) from exc
+    os.unlink(temp_path)
+
+
+def apply_retention(
+    destination_dir: Path,
+    *,
+    code_backups_root: Path,
+    repo_name: str,
+    retention_count: int = DEFAULT_RETENTION_COUNT,
+    tz: ZoneInfo | None = None,
+) -> list[Path]:
+    """Delete older matching bundles beyond retention. Returns deleted paths."""
+    bundles = list_verified_bundles_for_repo(destination_dir, repo_name)
+    doomed = bundles_to_delete(bundles, retention_count)
+    deleted: list[Path] = []
+    for path in doomed:
+        safe_unlink_bundle(
+            path, code_backups_root=code_backups_root, repo_name=repo_name
+        )
+        deleted.append(path)
+        log(f"Deleted old bundle: {path}", tz=tz)
+    return deleted
+
+
+def backup_repository(
+    repo: RepositoryConfig,
+    *,
+    code_backups_root: Path,
+    destinations: dict[str, str],
+    date_stamp: str | None = None,
+    retention_count: int = DEFAULT_RETENTION_COUNT,
+    tz: ZoneInfo | None = None,
+) -> Path:
+    """
+    Backup one repository.
+
+    Fetch of origin/main must succeed before any bundle is written.
+    Retention runs only after successful create+verify+publish.
+    """
+    stamp = date_stamp or today_stamp(tz=tz)
+
+    # Network/ref gate first: never write or prune if fetch/main is unhealthy.
+    validate_git_repo(repo.path)
+    log(f"{repo.name}: fetching origin main", tz=tz)
+    fetch_origin_main(repo.path)
+    confirm_origin_main(repo.path)
+
+    dest_dir = resolve_destination_dir(
+        code_backups_root, repo.destination, destinations
+    )
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    final_name = bundle_filename(repo.name, stamp)
+    final_path = (dest_dir / final_name).resolve()
+    if not is_beneath(final_path, code_backups_root.resolve()):
+        raise BackupError(f"Final bundle path escapes code_backups: {final_path}")
+    if final_path.exists():
+        raise BackupError(f"Bundle already exists (will not overwrite): {final_path}")
+
+    refs = collect_bundle_refs(repo.path)
+    temp_path = dest_dir / f".{final_name}.tmp"
+    if temp_path.exists():
+        # Stale temp from a prior crash; remove only our temp pattern under dest.
+        if not is_beneath(temp_path.resolve(), code_backups_root.resolve()):
+            raise BackupError(f"Temp path escapes code_backups: {temp_path}")
+        if temp_path.is_file() and not temp_path.is_symlink():
+            temp_path.unlink()
+        else:
+            raise BackupError(f"Refusing to clear non-file temp path: {temp_path}")
+
+    try:
+        log(f"{repo.name}: creating bundle {final_name}", tz=tz)
+        create_bundle(repo.path, temp_path, refs)
+        log(f"{repo.name}: verifying bundle", tz=tz)
+        verify_bundle(temp_path)
+        atomic_publish(temp_path, final_path)
+        log(f"{repo.name}: published {final_path}", tz=tz)
+    except Exception:
+        if temp_path.exists() and temp_path.is_file() and not temp_path.is_symlink():
+            if is_beneath(temp_path.resolve(), code_backups_root.resolve()):
+                temp_path.unlink()
+        raise
+
+    # Retention only after successful publish of today's verified bundle.
+    apply_retention(
+        dest_dir,
+        code_backups_root=code_backups_root,
+        repo_name=repo.name,
+        retention_count=retention_count,
+        tz=tz,
+    )
+    return final_path
+
+
+def main() -> int:
+    try:
+        config = load_config()
+    except BackupError as exc:
+        log(f"ERROR: configuration invalid: {exc}")
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        log(f"ERROR: failed to load config: {exc}")
+        return 1
+
+    tz = ZoneInfo(config.timezone)
+    log("Starting Git repository backup", tz=tz)
+    root = config.code_backups_root.resolve()
+    if not root.exists():
+        log(f"Creating code_backups root: {root}", tz=tz)
+        root.mkdir(parents=True, exist_ok=True)
+    if not root.is_dir():
+        log(f"ERROR: code_backups root is not a directory: {root}", tz=tz)
+        return 1
+
+    failures: list[str] = []
+    for repo in config.repositories:
+        try:
+            log(f"--- {repo.name} ---", tz=tz)
+            backup_repository(
+                repo,
+                code_backups_root=root,
+                destinations=config.destinations,
+                retention_count=config.retention_count,
+                tz=tz,
+            )
+            log(f"{repo.name}: OK", tz=tz)
+        except BackupError as exc:
+            log(f"ERROR: {repo.name}: {exc}", tz=tz)
+            log(f"{repo.name}: skipped (other repositories continue)", tz=tz)
+            failures.append(repo.name)
+        except Exception as exc:  # noqa: BLE001 — continue other repos
+            log(f"ERROR: {repo.name}: unexpected failure: {exc}", tz=tz)
+            log(f"{repo.name}: skipped (other repositories continue)", tz=tz)
+            failures.append(repo.name)
+
+    if failures:
+        log(f"Completed with failures: {', '.join(failures)}", tz=tz)
+        return 1
+    log("Completed successfully", tz=tz)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
