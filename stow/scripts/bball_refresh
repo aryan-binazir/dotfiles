@@ -1,0 +1,120 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+REPOS = (
+    Path("/home/ar/repos/bball-lab-go"),
+    Path("/home/ar/repos/bball-lab-ts"),
+)
+GO_REPO = Path("/home/ar/repos/bball-lab-go")
+MIN_ROOT_FREE_PERCENT = 10
+
+
+def run(argv: list[str], cwd: Path) -> int:
+    print(f"\n[{cwd}] $ {' '.join(argv)}", flush=True)
+    return subprocess.run(argv, cwd=cwd).returncode
+
+
+def has_changes(repo: Path) -> bool:
+    result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"git status failed in {repo}")
+    return bool(result.stdout)
+
+
+def stash_changes(repo: Path) -> int:
+    if not has_changes(repo):
+        print(f"[{repo}] no changes to stash", flush=True)
+        return 0
+
+    return run(
+        [
+            "git",
+            "stash",
+            "push",
+            "--include-untracked",
+            "-m",
+            "bball_refresh auto-stash before gb",
+        ],
+        repo,
+    )
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Refresh the local bball-lab k3d stack.",
+    )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Restart the local stack without stashing, pulling, or changing branches.",
+    )
+    return parser.parse_args(argv)
+
+
+def restart_stack() -> int:
+    usage = shutil.disk_usage("/")
+    if usage.free * 100 < usage.total * MIN_ROOT_FREE_PERCENT:
+        free_gib = usage.free / (1024**3)
+        free_percent = usage.free * 100 / usage.total
+        print(
+            "refusing to stop the local stack: "
+            f"root has {free_gib:.1f} GiB free ({free_percent:.1f}%); "
+            f"at least {MIN_ROOT_FREE_PERCENT}% is required before make down",
+            file=sys.stderr,
+        )
+        return 1
+
+    status = run(["make", "down"], GO_REPO)
+    if status != 0:
+        return status
+
+    return run(["make", "up"], GO_REPO)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+
+    for repo in REPOS:
+        if not repo.is_dir():
+            print(f"missing repo: {repo}", file=sys.stderr)
+            return 1
+
+    if args.dev:
+        print("dev mode: skipping git stash, gb, and branch changes", flush=True)
+        return restart_stack()
+
+    try:
+        for repo in REPOS:
+            status = stash_changes(repo)
+            if status != 0:
+                return status
+
+            status = run(["gb"], repo)
+            if status != 0:
+                return status
+    except RuntimeError as error:
+        print(error, file=sys.stderr)
+        return 1
+
+    return restart_stack()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
