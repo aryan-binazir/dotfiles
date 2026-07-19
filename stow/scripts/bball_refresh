@@ -63,17 +63,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Roll the local stack without stashing, pulling, or changing branches.",
     )
-    parser.add_argument(
-        "--maintenance",
-        action="store_true",
-        help="Allow a brief API outage to apply migrations and deployment configuration.",
-    )
     return parser.parse_args(argv)
 
 
-def refresh_stack(*, maintenance: bool) -> int:
-    target = "up" if maintenance else "rolling-refresh"
-    return run(["make", target], GO_REPO)
+def refresh_stack() -> int:
+    return run(["make", "rolling-refresh"], GO_REPO)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -86,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dev:
         print("dev mode: skipping git stash, gb, and branch changes", flush=True)
-        return refresh_stack(maintenance=args.maintenance)
+        return refresh_stack()
 
     try:
         for repo in REPOS:
@@ -101,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         print(error, file=sys.stderr)
         return 1
 
-    return refresh_stack(maintenance=args.maintenance)
+    return refresh_stack()
 
 
 if __name__ == "__main__":

@@ -62,18 +62,15 @@ class BballRefreshTest(unittest.TestCase):
             [["make", "rolling-refresh"]],
         )
 
-    def test_dev_maintenance_refresh_uses_make_up_without_stopping_cluster(self) -> None:
+    def test_maintenance_mode_is_not_available(self) -> None:
         script = load_script()
-        run = mock.Mock(return_value=subprocess.CompletedProcess(["make", "up"], 0))
+        run = mock.Mock()
 
-        with mock.patch("subprocess.run", run):
-            status = script.main(["--dev", "--maintenance"])
+        with mock.patch("subprocess.run", run), self.assertRaises(SystemExit) as error:
+            script.main(["--maintenance"])
 
-        self.assertEqual(status, 0)
-        self.assertEqual(
-            [call.args[0] for call in run.call_args_list],
-            [["make", "up"]],
-        )
+        self.assertEqual(error.exception.code, 2)
+        run.assert_not_called()
 
 
 if __name__ == "__main__":
