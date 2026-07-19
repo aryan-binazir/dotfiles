@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
-import io
 import subprocess
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest import mock
 
 
@@ -24,35 +22,36 @@ def load_script():
 
 
 class BballRefreshTest(unittest.TestCase):
-    def test_dev_restart_refuses_to_stop_stack_below_ten_percent_free(self) -> None:
+    def test_default_refresh_syncs_repos_then_rolls_workloads(self) -> None:
         script = load_script()
-        usage = SimpleNamespace(total=1_000, used=901, free=99)
-        stderr = io.StringIO()
 
-        with (
-            mock.patch("shutil.disk_usage", return_value=usage),
-            mock.patch("subprocess.run") as run,
-            mock.patch("sys.stderr", stderr),
-        ):
-            status = script.main(["--dev"])
+        def run_command(argv, **_kwargs):
+            if argv == ["git", "status", "--porcelain"]:
+                return subprocess.CompletedProcess(argv, 0, stdout="")
+            return subprocess.CompletedProcess(argv, 0)
 
-        self.assertEqual(status, 1)
-        self.assertIn("refusing to stop the local stack", stderr.getvalue())
-        self.assertIn("at least 10% is required before make down", stderr.getvalue())
-        run.assert_not_called()
+        with mock.patch("subprocess.run", side_effect=run_command) as run:
+            status = script.main([])
 
-    def test_dev_restart_preserves_down_up_at_ten_percent_free(self) -> None:
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [
+                ["git", "status", "--porcelain"],
+                ["gb"],
+                ["git", "status", "--porcelain"],
+                ["gb"],
+                ["make", "rolling-refresh"],
+            ],
+        )
+
+    def test_dev_refresh_rolls_workloads_without_stopping_cluster(self) -> None:
         script = load_script()
-        usage = SimpleNamespace(total=1_000, used=900, free=100)
         run = mock.Mock(
-            side_effect=(
-                subprocess.CompletedProcess(["make", "down"], 0),
-                subprocess.CompletedProcess(["make", "up"], 0),
-            )
+            return_value=subprocess.CompletedProcess(["make", "rolling-refresh"], 0)
         )
 
         with (
-            mock.patch("shutil.disk_usage", return_value=usage),
             mock.patch("subprocess.run", run),
         ):
             status = script.main(["--dev"])
@@ -60,7 +59,20 @@ class BballRefreshTest(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(
             [call.args[0] for call in run.call_args_list],
-            [["make", "down"], ["make", "up"]],
+            [["make", "rolling-refresh"]],
+        )
+
+    def test_dev_maintenance_refresh_uses_make_up_without_stopping_cluster(self) -> None:
+        script = load_script()
+        run = mock.Mock(return_value=subprocess.CompletedProcess(["make", "up"], 0))
+
+        with mock.patch("subprocess.run", run):
+            status = script.main(["--dev", "--maintenance"])
+
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [["make", "up"]],
         )
 
 

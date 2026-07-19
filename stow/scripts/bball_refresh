@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import argparse
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -18,7 +17,6 @@ REPOS = (
     Path("/home/ar/repos/bball-lab-ts"),
 )
 GO_REPO = Path("/home/ar/repos/bball-lab-go")
-MIN_ROOT_FREE_PERCENT = 10
 
 
 def run(argv: list[str], cwd: Path) -> int:
@@ -63,29 +61,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--dev",
         action="store_true",
-        help="Restart the local stack without stashing, pulling, or changing branches.",
+        help="Roll the local stack without stashing, pulling, or changing branches.",
+    )
+    parser.add_argument(
+        "--maintenance",
+        action="store_true",
+        help="Allow a brief API outage to apply migrations and deployment configuration.",
     )
     return parser.parse_args(argv)
 
 
-def restart_stack() -> int:
-    usage = shutil.disk_usage("/")
-    if usage.free * 100 < usage.total * MIN_ROOT_FREE_PERCENT:
-        free_gib = usage.free / (1024**3)
-        free_percent = usage.free * 100 / usage.total
-        print(
-            "refusing to stop the local stack: "
-            f"root has {free_gib:.1f} GiB free ({free_percent:.1f}%); "
-            f"at least {MIN_ROOT_FREE_PERCENT}% is required before make down",
-            file=sys.stderr,
-        )
-        return 1
-
-    status = run(["make", "down"], GO_REPO)
-    if status != 0:
-        return status
-
-    return run(["make", "up"], GO_REPO)
+def refresh_stack(*, maintenance: bool) -> int:
+    target = "up" if maintenance else "rolling-refresh"
+    return run(["make", target], GO_REPO)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -98,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dev:
         print("dev mode: skipping git stash, gb, and branch changes", flush=True)
-        return restart_stack()
+        return refresh_stack(maintenance=args.maintenance)
 
     try:
         for repo in REPOS:
@@ -113,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         print(error, file=sys.stderr)
         return 1
 
-    return restart_stack()
+    return refresh_stack(maintenance=args.maintenance)
 
 
 if __name__ == "__main__":
