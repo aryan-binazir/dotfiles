@@ -1,0 +1,52 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# ///
+
+import os
+import shutil
+import subprocess
+import sys
+
+
+COMMANDS = [
+    ["fwupdmgr", "refresh", "--force"],
+    ["fwupdmgr", "get-devices"],
+    ["fwupdmgr", "get-updates"],
+    ["fwupdmgr", "update"],
+]
+
+
+def main() -> int:
+    if os.geteuid() != 0:
+        print("Run this with sudo:")
+        print("  sudo ./update-firmware")
+        return 1
+
+    if shutil.which("fwupdmgr") is None:
+        print("fwupdmgr is not installed or not on PATH", file=sys.stderr)
+        return 1
+
+    print("Firmware updater")
+    print("Plug into power before continuing.\n")
+
+    for command in COMMANDS:
+        print(f"$ {' '.join(command)}")
+        result = subprocess.run(command)
+        if command[1] == "get-updates" and result.returncode == 2:
+            print("\nNo updates available for this system.")
+            return 0
+        if result.returncode != 0:
+            print(
+                f"\nCommand failed with exit code {result.returncode}: {' '.join(command)}",
+                file=sys.stderr,
+            )
+            return result.returncode
+        print()
+
+    print("Done. Reboot if fwupdmgr requested it.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
