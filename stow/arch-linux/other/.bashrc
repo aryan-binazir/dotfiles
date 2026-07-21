@@ -13,6 +13,11 @@ source ~/.local/share/omarchy/default/bash/rc
 # Point interactive shells at the systemd user ssh-agent.
 if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
   export SSH_AUTH_SOCK="$XDG_RUNTIME_DIR/ssh-agent.socket"
+
+  # Unlock the GitHub key once per ssh-agent lifetime.
+  if ! ssh-add -l >/dev/null 2>&1; then
+    ssh-add "$HOME/.ssh/id_ed25519"
+  fi
 fi
 
 # Make an alias for invoking commands you use constantly

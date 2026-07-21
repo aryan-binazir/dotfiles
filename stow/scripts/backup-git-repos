@@ -363,18 +363,17 @@ def verify_bundle(bundle_path: Path, repo: Path) -> None:
         raise BackupError(f"Bundle verification failed for {bundle_path}: {detail}")
 
 
-def atomic_publish(temp_path: Path, final_path: Path) -> None:
-    """Publish temp → final without overwriting an existing final name."""
+def atomic_publish(temp_path: Path, final_path: Path) -> bool:
+    """Publish temp → final without overwriting. Return whether it was published."""
     if final_path.exists():
-        raise BackupError(f"Bundle already exists (will not overwrite): {final_path}")
+        return False
     try:
         # link fails with FileExistsError if final appears; does not overwrite.
         os.link(temp_path, final_path)
-    except FileExistsError as exc:
-        raise BackupError(
-            f"Bundle already exists (will not overwrite): {final_path}"
-        ) from exc
+    except FileExistsError:
+        return False
     os.unlink(temp_path)
+    return True
 
 
 def apply_retention(
@@ -411,7 +410,8 @@ def backup_repository(
     Backup one repository.
 
     Fetch of origin/main must succeed before any bundle is written.
-    Retention runs only after successful create+verify+publish.
+    An existing verified bundle for the date is an idempotent success.
+    Retention runs only after a verified bundle is available at the final path.
     """
     stamp = date_stamp or today_stamp(tz=tz)
 
@@ -431,7 +431,17 @@ def backup_repository(
     if not is_beneath(final_path, code_backups_root.resolve()):
         raise BackupError(f"Final bundle path escapes code_backups: {final_path}")
     if final_path.exists():
-        raise BackupError(f"Bundle already exists (will not overwrite): {final_path}")
+        log(f"{repo.name}: bundle already exists; verifying {final_name}", tz=tz)
+        verify_bundle(final_path, repo.path)
+        log(f"{repo.name}: existing bundle is valid; nothing to do", tz=tz)
+        apply_retention(
+            dest_dir,
+            code_backups_root=code_backups_root,
+            repo_name=repo.name,
+            retention_count=retention_count,
+            tz=tz,
+        )
+        return final_path
 
     refs = collect_bundle_refs(repo.path)
     temp_path = dest_dir / f".{final_name}.tmp"
@@ -449,8 +459,16 @@ def backup_repository(
         create_bundle(repo.path, temp_path, refs)
         log(f"{repo.name}: verifying bundle", tz=tz)
         verify_bundle(temp_path, repo.path)
-        atomic_publish(temp_path, final_path)
-        log(f"{repo.name}: published {final_path}", tz=tz)
+        if atomic_publish(temp_path, final_path):
+            log(f"{repo.name}: published {final_path}", tz=tz)
+        else:
+            log(
+                f"{repo.name}: bundle was published concurrently; verifying existing bundle",
+                tz=tz,
+            )
+            verify_bundle(final_path, repo.path)
+            temp_path.unlink()
+            log(f"{repo.name}: existing bundle is valid; nothing to do", tz=tz)
     except Exception:
         if temp_path.exists() and temp_path.is_file() and not temp_path.is_symlink():
             if is_beneath(temp_path.resolve(), code_backups_root.resolve()):
