@@ -1,46 +1,52 @@
-#!/bin/bash
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# ///
 
-check_only=false
-force=false
-for arg in "$@"; do
-    case "$arg" in
-        --check|-c) check_only=true ;;
-        --force|-f) force=true ;;
-    esac
-done
+import os
+import shutil
+import subprocess
+import sys
 
-if ! command -v fwupdmgr &>/dev/null; then
-    echo "fwupdmgr not found. Install fwupd first."
-    exit 1
-fi
 
-echo "Refreshing firmware metadata..."
-fwupdmgr refresh --force
+COMMANDS = [
+    ["fwupdmgr", "refresh", "--force"],
+    ["fwupdmgr", "get-devices"],
+    ["fwupdmgr", "get-updates"],
+    ["fwupdmgr", "update"],
+]
 
-echo ""
-echo "Checking for updates..."
-if ! fwupdmgr get-updates 2>/dev/null; then
-    echo "No firmware updates available."
-    exit 0
-fi
 
-if $check_only; then
-    exit 0
-fi
+def main() -> int:
+    if os.geteuid() != 0:
+        print("Run this with sudo:")
+        print("  sudo ./update-firmware")
+        return 1
 
-if $force; then
-    echo ""
-    fwupdmgr update
-    echo ""
-    echo "Reboot to complete the update."
-else
-    echo ""
-    read -rp "Apply updates? [y/N] " confirm
-    if [[ "$confirm" =~ ^[Yy]$ ]]; then
-        fwupdmgr update
-        echo ""
-        echo "Reboot to complete the update."
-    else
-        echo "Aborted."
-    fi
-fi
+    if shutil.which("fwupdmgr") is None:
+        print("fwupdmgr is not installed or not on PATH", file=sys.stderr)
+        return 1
+
+    print("Firmware updater")
+    print("Plug into power before continuing.\n")
+
+    for command in COMMANDS:
+        print(f"$ {' '.join(command)}")
+        result = subprocess.run(command)
+        if command[1] == "get-updates" and result.returncode == 2:
+            print("\nNo updates available for this system.")
+            return 0
+        if result.returncode != 0:
+            print(
+                f"\nCommand failed with exit code {result.returncode}: {' '.join(command)}",
+                file=sys.stderr,
+            )
+            return result.returncode
+        print()
+
+    print("Done. Reboot if fwupdmgr requested it.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
