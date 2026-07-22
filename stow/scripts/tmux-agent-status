@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+
+# Detect busy AI panes and drive their shared tmux spinner.
+# Supports title-based agents (Codex) and TUI status lines (Cursor, Pi, Claude).
+
+mode=${1:-}
+socket_path=${2:-}
+[[ -n $socket_path ]] || exit 0
+tmux_command=(tmux -S "$socket_path")
+
+run_ticker() {
+	local existing_pid current_pid frame
+	local frames=(⠹ ⢸ ⣰ ⣤ ⣆ ⡇ ⠏ ⠛)
+
+	existing_pid=$("${tmux_command[@]}" show-option -gqv @agent-spinner-ticker-pid 2>/dev/null)
+	if [[ $existing_pid =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" 2>/dev/null; then
+		exit 0
+	fi
+
+	"${tmux_command[@]}" set-option -g @agent-spinner-ticker-pid "$$" 2>/dev/null || exit 0
+
+	cleanup() {
+		current_pid=$("${tmux_command[@]}" show-option -gqv @agent-spinner-ticker-pid 2>/dev/null)
+		if [[ $current_pid == "$$" ]]; then
+			"${tmux_command[@]}" set-option -gu @agent-spinner-ticker-pid 2>/dev/null || true
+			"${tmux_command[@]}" set-option -gu @agent-spinner-frame 2>/dev/null || true
+		fi
+	}
+	trap cleanup EXIT
+	trap 'exit 0' HUP INT TERM
+
+	while "${tmux_command[@]}" has-session 2>/dev/null; do
+		if [[ -z $("${tmux_command[@]}" list-clients -F '#{client_name}' 2>/dev/null) ]]; then
+			sleep 1
+			continue
+		fi
+
+		for frame in "${frames[@]}"; do
+			"${tmux_command[@]}" set-option -g @agent-spinner-frame "$frame" 2>/dev/null || exit 0
+			sleep 0.125
+		done
+	done
+}
+
+if [[ $mode == tick ]]; then
+	run_ticker
+	exit 0
+fi
+
+[[ $mode == check ]] || exit 0
+pane_id=${3:-}
+[[ $pane_id =~ ^%[0-9]+$ ]] || exit 0
+
+pane_details=$("${tmux_command[@]}" display-message -p -t "$pane_id" $'#{pane_current_command}\t#{pane_title}' 2>/dev/null) || exit 0
+IFS=$'\t' read -r pane_command pane_title <<< "$pane_details"
+
+case "$pane_title" in
+	⠋* | ⠙* | ⠹* | ⠸* | ⠼* | ⠴* | ⠦* | ⠧* | ⠇* | ⠏*)
+		printf '1'
+		exit 0
+		;;
+esac
+
+case "$pane_command" in
+	codex | cursor-agent | node | pi | claude) ;;
+	*) exit 0 ;;
+esac
+
+pane_content=$("${tmux_command[@]}" capture-pane -p -t "$pane_id" 2>/dev/null) || exit 0
+busy_line=
+
+case "$pane_command" in
+	cursor-agent | pi)
+		busy_line=$(printf '%s\n' "$pane_content" | grep -E '(^|[[:space:]])Working(\.\.\.)?([[:space:]]|$)' | tail -n 1)
+		;;
+esac
+
+if [[ -z $busy_line ]]; then
+	busy_line=$(printf '%s\n' "$pane_content" | grep -Ei 'esc(ape)? to interrupt' | tail -n 1)
+fi
+
+[[ -n $busy_line ]] || exit 0
+printf '1'
