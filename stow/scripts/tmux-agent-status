@@ -7,6 +7,8 @@ mode=${1:-}
 socket_path=${2:-}
 [[ -n $socket_path ]] || exit 0
 tmux_command=(tmux -S "$socket_path")
+pane_field_separator=$'\x1f'
+pane_format="#{pane_id}${pane_field_separator}#{pane_current_command}${pane_field_separator}#{pane_title}${pane_field_separator}#{@agent-status}"
 
 get_pane_status() {
 	"${tmux_command[@]}" show-option -pqv -t "$1" @agent-status 2>/dev/null
@@ -31,10 +33,9 @@ clear_window_status() {
 }
 
 detect_pane_busy() {
-	local pane_id=$1 pane_details pane_command pane_title pane_content busy_line
-
-	pane_details=$("${tmux_command[@]}" display-message -p -t "$pane_id" $'#{pane_current_command}\t#{pane_title}' 2>/dev/null) || return 2
-	IFS=$'\t' read -r pane_command pane_title <<< "$pane_details"
+	local pane_id=$1 pane_command=$2 pane_title=$3 pane_content
+	local working_pattern='(^|[[:space:]])Working(\.\.\.)?([[:space:]]|$)'
+	local interrupt_pattern='[Ee][Ss][Cc]([Aa][Pp][Ee])?[[:space:]]+[Tt][Oo][[:space:]]+[Ii][Nn][Tt][Ee][Rr][Rr][Uu][Pp][Tt]'
 
 	case "$pane_title" in
 		⠋* | ⠙* | ⠹* | ⠸* | ⠼* | ⠴* | ⠦* | ⠧* | ⠇* | ⠏*) return 0 ;;
@@ -46,26 +47,21 @@ detect_pane_busy() {
 	esac
 
 	pane_content=$("${tmux_command[@]}" capture-pane -p -t "$pane_id" 2>/dev/null) || return 2
-	busy_line=
 
 	case "$pane_command" in
 		cursor-agent | pi)
-			busy_line=$(printf '%s\n' "$pane_content" | grep -E '(^|[[:space:]])Working(\.\.\.)?([[:space:]]|$)' | tail -n 1)
+			[[ $pane_content =~ $working_pattern ]] && return 0
 			;;
 	esac
 
-	if [[ -z $busy_line ]]; then
-		busy_line=$(printf '%s\n' "$pane_content" | grep -Ei 'esc(ape)? to interrupt' | tail -n 1)
-	fi
-
-	[[ -n $busy_line ]]
+	[[ $pane_content =~ $interrupt_pattern ]]
 }
 
 pane_is_visible() {
-	local pane_id=$1 active_pane
+	local pane_id=$1 client_panes=$2 active_pane
 	while IFS= read -r active_pane; do
 		[[ $active_pane == "$pane_id" ]] && return 0
-	done < <("${tmux_command[@]}" list-clients -F '#{pane_id}' 2>/dev/null)
+	done <<< "$client_panes"
 	return 1
 }
 
@@ -78,50 +74,53 @@ print_pane_status() {
 }
 
 check_pane_status() {
-	local pane_id=$1 detection_result previous_status
+	local pane_id=$1 pane_command=$2 pane_title=$3 previous_status=$4 client_panes=$5
+	local detection_result
+	checked_pane_status=$previous_status
 
-	detect_pane_busy "$pane_id"
+	detect_pane_busy "$pane_id" "$pane_command" "$pane_title"
 	detection_result=$?
-	previous_status=$(get_pane_status "$pane_id")
 
 	if [[ $detection_result == 0 ]]; then
 		[[ $previous_status == busy ]] || set_pane_status "$pane_id" busy
-		printf '1'
+		checked_pane_status=busy
 		return
 	fi
 
 	if [[ $detection_result == 2 ]]; then
-		print_pane_status "$previous_status"
 		return
 	fi
 
 	if [[ $previous_status == busy ]]; then
-		if pane_is_visible "$pane_id"; then
+		if pane_is_visible "$pane_id" "$client_panes"; then
 			"${tmux_command[@]}" set-option -pu -t "$pane_id" @agent-status 2>/dev/null || true
-			printf '0'
+			checked_pane_status=
 		else
 			set_pane_status "$pane_id" done
-			printf '2'
+			checked_pane_status=done
 		fi
-		return
 	fi
-
-	print_pane_status "$previous_status"
 }
 
 scan_all_panes() {
-	local pane_id
-	while IFS= read -r pane_id; do
-		[[ -n $pane_id ]] && check_pane_status "$pane_id" >/dev/null
-	done < <("${tmux_command[@]}" list-panes -a -F '#{pane_id}' 2>/dev/null)
-}
+	local pane_rows client_panes pane_id pane_command pane_title previous_status
+	local any_busy=0
 
-has_busy_panes() {
-	"${tmux_command[@]}" list-panes -a -F '#{@agent-status}' 2>/dev/null | grep -qx busy
+	pane_rows=$("${tmux_command[@]}" list-panes -a -F "$pane_format" 2>/dev/null) || return 2
+	client_panes=$("${tmux_command[@]}" list-clients -F '#{pane_id}' 2>/dev/null)
+
+	while IFS="$pane_field_separator" read -r pane_id pane_command pane_title previous_status; do
+		[[ -n $pane_id ]] || continue
+		check_pane_status "$pane_id" "$pane_command" "$pane_title" "$previous_status" "$client_panes"
+		[[ $checked_pane_status == busy ]] && any_busy=1
+	done <<< "$pane_rows"
+
+	[[ $any_busy == 1 && -n $client_panes ]]
 }
 
 run_ticker() {
-	local existing_pid current_pid frame
+	local existing_pid current_pid frame scan_pid scan_result
+	local spinner_active=0 frame_index=0 ticks_until_scan=0
 	local frames=(⠹ ⢸ ⣰ ⣤ ⣆ ⡇ ⠏ ⠛)
 
 	existing_pid=$("${tmux_command[@]}" show-option -gqv @agent-spinner-ticker-pid 2>/dev/null)
@@ -132,6 +131,11 @@ run_ticker() {
 	"${tmux_command[@]}" set-option -g @agent-spinner-ticker-pid "$$" 2>/dev/null || exit 0
 
 	cleanup() {
+		if [[ -n $scan_pid ]]; then
+			kill "$scan_pid" 2>/dev/null || true
+			wait "$scan_pid" 2>/dev/null || true
+		fi
+
 		current_pid=$("${tmux_command[@]}" show-option -gqv @agent-spinner-ticker-pid 2>/dev/null)
 		if [[ $current_pid == "$$" ]]; then
 			"${tmux_command[@]}" set-option -gu @agent-spinner-ticker-pid 2>/dev/null || true
@@ -141,18 +145,52 @@ run_ticker() {
 	trap cleanup EXIT
 	trap 'exit 0' HUP INT TERM
 
-	while "${tmux_command[@]}" has-session 2>/dev/null; do
-		scan_all_panes
+	while :; do
+		if [[ $spinner_active == 0 ]]; then
+			scan_all_panes
+			scan_result=$?
+			case "$scan_result" in
+				0)
+					spinner_active=1
+					ticks_until_scan=8
+					;;
+				1)
+					sleep 1
+					continue
+					;;
+				*) exit 0 ;;
+			esac
+		fi
 
-		if [[ -z $("${tmux_command[@]}" list-clients -F '#{client_name}' 2>/dev/null) ]] || ! has_busy_panes; then
+		if [[ -n $scan_pid ]] && ! kill -0 "$scan_pid" 2>/dev/null; then
+			wait "$scan_pid"
+			scan_result=$?
+			scan_pid=
+			case "$scan_result" in
+				0) ;;
+				1) spinner_active=0 ;;
+				*) exit 0 ;;
+			esac
+		fi
+
+		if [[ $spinner_active == 0 ]]; then
 			sleep 1
 			continue
 		fi
 
-		for frame in "${frames[@]}"; do
-			"${tmux_command[@]}" set-option -g @agent-spinner-frame "$frame" 2>/dev/null || exit 0
-			sleep 0.125
-		done
+		if [[ $ticks_until_scan == 0 && -z $scan_pid ]]; then
+			scan_all_panes &
+			scan_pid=$!
+			ticks_until_scan=8
+		fi
+
+		frame=${frames[$frame_index]}
+		"${tmux_command[@]}" set-option -g @agent-spinner-frame "$frame" 2>/dev/null || exit 0
+		frame_index=$(((frame_index + 1) % ${#frames[@]}))
+		sleep 0.125
+		if [[ $ticks_until_scan -gt 0 ]]; then
+			ticks_until_scan=$((ticks_until_scan - 1))
+		fi
 	done
 }
 
@@ -162,7 +200,13 @@ case "$mode" in
 		;;
 	check)
 		pane_id=${3:-}
-		[[ $pane_id =~ ^%[0-9]+$ ]] && check_pane_status "$pane_id"
+		if [[ $pane_id =~ ^%[0-9]+$ ]]; then
+			pane_details=$("${tmux_command[@]}" display-message -p -t "$pane_id" "$pane_format" 2>/dev/null) || exit 0
+			client_panes=$("${tmux_command[@]}" list-clients -F '#{pane_id}' 2>/dev/null)
+			IFS="$pane_field_separator" read -r pane_id pane_command pane_title previous_status <<< "$pane_details"
+			check_pane_status "$pane_id" "$pane_command" "$pane_title" "$previous_status" "$client_panes"
+			print_pane_status "$checked_pane_status"
+		fi
 		;;
 	clear-pane)
 		pane_id=${3:-}
