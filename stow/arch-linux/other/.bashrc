@@ -30,8 +30,6 @@ alias acd='codex --sandbox workspace-write --ask-for-approval on-request -c appr
 alias acu='cursor-agent --sandbox enabled'
 alias aco='opencode'
 alias claude='/usr/bin/claude'
-# alias update='sudo paru -Syu && claude update'
-# alias updateYay='yay -Syu && claude update'
 
 # Re-enable hashing before loading NVM (fixes "hash: hashing disabled" error)
 set -h
