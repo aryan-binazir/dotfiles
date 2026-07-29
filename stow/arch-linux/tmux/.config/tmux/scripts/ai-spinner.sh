@@ -14,8 +14,9 @@
 #   pi          — pane content shows "Working" / "Working..." while working
 #                 (marker taken from the earlier tmux-agent-status attempt).
 #
-# Animation (every 250ms): frame advances and clients are refreshed with
-# refresh-client -S, so the spinner moves faster than status-interval.
+# Animation (every 200ms): frame advances by two positions and clients are
+# refreshed with refresh-client -S, so rotation stays quick without needing
+# a high refresh rate.
 
 # Claim the singleton slot; a previously running daemon notices the pid
 # change on its next detection tick and exits on its own (killing it here
@@ -41,7 +42,7 @@ working_s=""
 need_clear=0
 tick=0
 while :; do
-    if [ $((tick % 4)) -eq 0 ]; then
+    if [ $((tick % 5)) -eq 0 ]; then
         tmux has-session 2>/dev/null || exit 0
         [ "$(tmux show -gqv @ai_spinner_pid)" = "$$" ] || exit 0
 
@@ -88,7 +89,7 @@ EOF
     fi
 
     if [ -n "$working" ] || [ "$need_clear" = 1 ]; then
-        eval "frame=\$f$((tick % 8))"
+        eval "frame=\$f$(((tick * 2) % 8))"
         for wnd in $working; do
             tmux set -w -t "$wnd" @ai_spinner " $frame" 2>/dev/null
         done
@@ -102,5 +103,5 @@ EOF
     fi
 
     tick=$((tick + 1))
-    sleep 0.25
+    sleep 0.2
 done
