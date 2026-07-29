@@ -14,7 +14,7 @@
 #   pi          — pane content shows "Working" / "Working..." while working
 #                 (marker taken from the earlier tmux-agent-status attempt).
 #
-# Animation (every ~167ms): frame advances one position and clients are
+# Animation (every 250ms): frame advances one position and clients are
 # refreshed with refresh-client -S, so rotation stays quick without needing
 # a high refresh rate.
 
@@ -31,7 +31,7 @@ for s in $(tmux list-sessions -F '#{session_id}'); do
     tmux set -t "$s" -u @ai_spinner_s 2>/dev/null
 done
 
-f0=⡇ f1=⠏ f2=⠛ f3=⠹ f4=⢸ f5=⣰ f6=⣤ f7=⣇
+f0=⡇ f1=⠏ f2=⠛ f3=⠹ f4=⢸ f5=⣰ f6=⣤ f7=⣆
 
 # UTF-8 prefixes covering the braille block (E2 A0 80 .. E2 A3 BF)
 b0=$(printf '\342\240') b1=$(printf '\342\241')
@@ -141,7 +141,7 @@ while :; do
         apply_scan
     fi
 
-    if [ $((tick % 6)) -eq 0 ]; then
+    if [ $((tick % 4)) -eq 0 ]; then
         tmux has-session 2>/dev/null || exit 0
         [ "$(tmux show -gqv @ai_spinner_pid)" = "$$" ] || exit 0
 
@@ -163,5 +163,5 @@ while :; do
     fi
 
     tick=$((tick + 1))
-    sleep 0.1667
+    sleep 0.25
 done
