@@ -50,6 +50,22 @@ def symlink_skills() -> None:
     for source_dir in SOURCE_DIRS:
         require_dir(source_dir, "source skills directory")
 
+    try:
+        hunk_skill_result = subprocess.run(
+            ["hunk", "skill", "path"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as error:
+        raise RuntimeError("hunk not found in PATH") from error
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError("hunk skill path failed") from error
+
+    hunk_skill_file = Path(hunk_skill_result.stdout.strip()).expanduser()
+    if not hunk_skill_file.is_file() or hunk_skill_file.name != "SKILL.md":
+        raise RuntimeError(f"hunk returned invalid skill path: {hunk_skill_file}")
+
     TARGET_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Syncing skills into {TARGET_DIR}")
 
@@ -57,26 +73,30 @@ def symlink_skills() -> None:
     replaced = 0
     unchanged = 0
 
+    source_paths: list[Path] = []
     for source_dir in SOURCE_DIRS:
         for source_path in sorted(source_dir.iterdir()):
-            if not source_path.is_dir():
+            if source_path.is_dir():
+                source_paths.append(source_path)
+
+    source_paths.append(hunk_skill_file.parent)
+
+    for source_path in source_paths:
+        target_path = TARGET_DIR / source_path.name
+        if target_path.is_symlink():
+            if target_path.resolve(strict=False) == source_path:
+                unchanged += 1
                 continue
+            print(f"Relinking {target_path.name}: {target_path} -> {source_path}")
+            target_path.unlink()
+            replaced += 1
+        elif target_path.exists():
+            raise RuntimeError(f"target exists and is not a symlink: {target_path}")
+        else:
+            print(f"Linking {target_path.name}: {target_path} -> {source_path}")
+            created += 1
 
-            target_path = TARGET_DIR / source_path.name
-            if target_path.is_symlink():
-                if target_path.resolve(strict=False) == source_path:
-                    unchanged += 1
-                    continue
-                print(f"Relinking {target_path.name}: {target_path} -> {source_path}")
-                target_path.unlink()
-                replaced += 1
-            elif target_path.exists():
-                raise RuntimeError(f"target exists and is not a symlink: {target_path}")
-            else:
-                print(f"Linking {target_path.name}: {target_path} -> {source_path}")
-                created += 1
-
-            target_path.symlink_to(source_path)
+        target_path.symlink_to(source_path)
 
     print(
         "Done: "
