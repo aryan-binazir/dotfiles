@@ -28,6 +28,7 @@ alias venv='source ~/.venv/bin/activate'
 alias acc='claude --permission-mode auto'
 alias acd='codex --sandbox workspace-write --ask-for-approval on-request -c approvals_reviewer=auto_review -c sandbox_workspace_write.network_access=true'
 alias acu='cursor-agent --sandbox enabled'
+alias h='hunk diff main...HEAD'
 
 # Re-enable hashing before loading NVM (fixes "hash: hashing disabled" error)
 set -h
