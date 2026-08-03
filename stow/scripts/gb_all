@@ -1,0 +1,186 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
+"""gb_all — run `gb` across every ~/repos/go-<n> clone, concurrently.
+
+A convenience wrapper, nothing more. For each ~/repos/go-<n> clone it:
+
+  1. Preserves the current working copy as its existing jj change.
+  2. Runs `gb`, which initializes a colocated jj repo when needed, fetches
+     origin, and creates a fresh change with main@origin as its parent.
+
+It NEVER deletes branches or abandons changes. Clones are processed in parallel;
+each logs a single line to stderr when it finishes (ready / skipped / failed,
+with elapsed time). Full command output is shown only for failures. One failing
+clone never aborts the rest — a summary line closes the run.
+
+Clones mid-rebase/merge/bisect are skipped untouched. A detached Git HEAD is
+skipped only before jj initialization; detached HEAD is normal in a colocated
+jj repo.
+
+Examples:
+  gb_all            # run gb on all go-<n> clones
+  gb_all -j 4       # cap concurrency at 4 workers
+  gb_all -q         # only log skips, failures, and the summary
+"""
+
+import argparse
+import logging
+import re
+import subprocess
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+REPOS = Path.home() / "repos"
+CLONE_RE = re.compile(r"^go-\d+$")  # go-1, go-2, ... only (skips go-2-foo, learn-go)
+
+log = logging.getLogger("gb_all")
+
+
+def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
+    """Run a command in cwd, capturing combined output as text."""
+    return subprocess.run(
+        args, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+    )
+
+
+def repository_state(clone: Path) -> str | None:
+    """Return a reason to skip this clone, or None if it's safe to process."""
+    git_dir = clone / ".git"
+    if (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists():
+        return "rebase in progress"
+    if (git_dir / "MERGE_HEAD").exists():
+        return "merge in progress"
+    if (git_dir / "BISECT_LOG").exists():
+        return "bisect in progress"
+    if (git_dir / "CHERRY_PICK_HEAD").exists():
+        return "cherry-pick in progress"
+    if (git_dir / "REVERT_HEAD").exists():
+        return "revert in progress"
+    if (git_dir / "sequencer").exists():
+        return "sequencer in progress"
+    head = run(["git", "symbolic-ref", "-q", "HEAD"], clone)
+    if not (clone / ".jj").is_dir() and head.returncode != 0:
+        return "detached HEAD"
+    return None
+
+
+def has_work(clone: Path) -> bool:
+    """True if gb will preserve file changes in the current change."""
+    if (clone / ".jj").is_dir():
+        status = run(["jj", "diff", "--summary"], clone)
+    else:
+        status = run(["git", "status", "--porcelain"], clone)
+    return bool(status.stdout.strip())
+
+
+class Result:
+    """Outcome of processing one clone."""
+
+    def __init__(self, name: str, status: str, detail: str, secs: float):
+        self.name = name
+        self.status = status  # "ok", "skip", or "fail"
+        self.detail = detail  # short summary; failures carry full gb output
+        self.secs = secs
+
+
+def process(clone: Path) -> Result:
+    """Stash + run gb for one clone. Logs a single line on completion."""
+    name = clone.name
+    started = time.monotonic()
+
+    def done(status: str, detail: str) -> Result:
+        secs = time.monotonic() - started
+        msg = f"{name}: {detail} ({secs:.1f}s)"
+        if status == "fail":
+            log.error(msg)
+        elif status == "skip":
+            log.warning(msg)
+        else:
+            log.info(msg)
+        return Result(name, status, detail, secs)
+
+    try:
+        skip = repository_state(clone)
+        if skip:
+            return done("skip", f"skipped, {skip}")
+
+        preserved_work = has_work(clone)
+
+        gb = run(["gb"], clone)
+        if gb.returncode != 0:
+            return done("fail", f"gb exited {gb.returncode}\n{gb.stdout.strip()}")
+    except Exception as error:  # never let one clone abort the whole run
+        return done("fail", f"unexpected error: {error}")
+
+    note = "ready on main@origin"
+    if preserved_work:
+        note += ", preserved previous jj change"
+    return done("ok", note)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run gb across all ~/repos/go-<n> clones.")
+    parser.add_argument(
+        "-j", "--jobs", type=int, default=0,
+        help="max concurrent clones (default: all at once)",
+    )
+    parser.add_argument(
+        "-q", "--quiet", action="store_true",
+        help="only log skips and failures, plus the final summary",
+    )
+    opts = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.WARNING if opts.quiet else logging.INFO,
+        format="%(asctime)s %(message)s",
+        datefmt="%H:%M:%S",
+        stream=sys.stderr,
+    )
+
+    clones = sorted(
+        (
+            p for p in REPOS.iterdir()
+            if p.is_dir() and CLONE_RE.match(p.name) and (p / ".git").is_dir()
+        ),
+        key=lambda p: int(p.name.split("-")[1]),
+    )
+    if not clones:
+        log.error("no go-<n> clones found under %s", REPOS)
+        return 1
+
+    workers = opts.jobs if opts.jobs > 0 else len(clones)
+    started = time.monotonic()
+    log.info("syncing %d clone(s) with %d worker(s)", len(clones), workers)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(process, c) for c in clones]
+        results = [f.result() for f in as_completed(futures)]
+
+    failed = [r for r in results if r.status == "fail"]
+    skipped = [r for r in results if r.status == "skip"]
+    ready = len(results) - len(failed) - len(skipped)
+    elapsed = time.monotonic() - started
+
+    summary = f"done in {elapsed:.1f}s: {ready} ready, {len(skipped)} skipped, {len(failed)} failed"
+    if failed:
+        log.error("%s [%s]", summary, ", ".join(r.name for r in failed))
+        return 1
+    # Always show the summary, even under -q (level is WARNING there).
+    (log.warning if opts.quiet else log.info)(summary)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        print("error: interrupted", file=sys.stderr)
+        raise SystemExit(130)
+    except Exception as error:
+        print(f"error: {error}", file=sys.stderr)
+        raise SystemExit(1)
