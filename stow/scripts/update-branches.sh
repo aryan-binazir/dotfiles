@@ -78,7 +78,8 @@ jj_cache_key() {
         ops+=("${op##*/}")
     done
     (( ${#ops[@]} )) || return 1
-    mapfile -t ops < <(printf '%s\n' "${ops[@]}" | sort)
+    # Shell pathname expansion is already sorted, so no Bash 4 `mapfile` is
+    # needed here. Keeping the script Bash 3.2-compatible matters on macOS.
     REPLY="$JJHEAD:$(IFS=,; printf '%s' "${ops[*]}")"
 }
 
@@ -98,41 +99,69 @@ jj_query() {
 }
 
 declare -a session_ids=()
-declare -A session_label=() session_jjroot=()
-declare -A cache_key=() cache_label=() root_label=() root_key=() jj_outfile=()
+declare -a session_labels=() session_jjroots=()
+declare -a cache_roots=() cache_keys=() cache_labels=()
+declare -a jj_roots=() jj_keys=() jj_labels=() jj_outfiles=()
 declare JJROOT= JJHEAD= jj_tmpdir= jjkey=
 declare c_root c_key c_label
+declare cache_index i j jj_index session_index
 
 if [[ -r $cache_file ]]; then
     while IFS=$'\t' read -r c_root c_key c_label; do
         [[ -n $c_root && -n $c_key && -n $c_label ]] || continue
-        cache_key["$c_root"]=$c_key
-        cache_label["$c_root"]=$c_label
+        cache_index=${#cache_roots[@]}
+        cache_roots[$cache_index]=$c_root
+        cache_keys[$cache_index]=$c_key
+        cache_labels[$cache_index]=$c_label
     done < "$cache_file"
 fi
 
 while IFS=$'\t' read -r session_id session_path; do
     [[ -n $session_id ]] || continue
-    session_ids+=("$session_id")
+    session_index=${#session_ids[@]}
+    session_ids[$session_index]=$session_id
+    session_labels[$session_index]=
+    session_jjroots[$session_index]=
 
     if [[ -d $session_path ]] && git_branch "$session_path"; then
-        session_label["$session_id"]=$REPLY
+        session_labels[$session_index]=$REPLY
         if [[ -n $JJROOT ]]; then
-            session_jjroot["$session_id"]=$JJROOT
-            if [[ -z ${root_label[$JJROOT]:-} && -z ${jj_outfile[$JJROOT]:-} ]]; then
+            session_jjroots[$session_index]=$JJROOT
+            jj_index=-1
+            for ((i = 0; i < ${#jj_roots[@]}; i++)); do
+                if [[ ${jj_roots[$i]} == "$JJROOT" ]]; then
+                    jj_index=$i
+                    break
+                fi
+            done
+
+            if ((jj_index < 0)); then
+                jj_index=${#jj_roots[@]}
+                jj_roots[$jj_index]=$JJROOT
+                jj_labels[$jj_index]=
+                jj_outfiles[$jj_index]=
                 jjkey=$JJHEAD
                 jj_cache_key "$JJROOT" && jjkey=$REPLY
-                if [[ ${cache_key[$JJROOT]:-} == "$jjkey" ]]; then
-                    root_label["$JJROOT"]=${cache_label[$JJROOT]}
+                jj_keys[$jj_index]=$jjkey
+
+                cache_index=-1
+                for ((i = 0; i < ${#cache_roots[@]}; i++)); do
+                    if [[ ${cache_roots[$i]} == "$JJROOT" && ${cache_keys[$i]} == "$jjkey" ]]; then
+                        cache_index=$i
+                        break
+                    fi
+                done
+
+                if ((cache_index >= 0)); then
+                    jj_labels[$jj_index]=${cache_labels[$cache_index]}
                 else
                     if [[ -z $jj_tmpdir ]]; then
                         jj_tmpdir=$(mktemp -d 2>/dev/null) || jj_tmpdir=
                         [[ -n $jj_tmpdir ]] && trap 'rm -rf "$jj_tmpdir"' EXIT
                     fi
                     if [[ -n $jj_tmpdir ]]; then
-                        root_key["$JJROOT"]=$jjkey
-                        jj_outfile["$JJROOT"]=$jj_tmpdir/${#jj_outfile[@]}
-                        jj_query "$JJROOT" "${jj_outfile[$JJROOT]}" &
+                        jj_outfiles[$jj_index]=$jj_tmpdir/$jj_index
+                        jj_query "$JJROOT" "${jj_outfiles[$jj_index]}" &
                     fi
                 fi
             fi
@@ -144,32 +173,50 @@ wait
 
 declare root out label cache_dirty=0
 
-for root in "${!jj_outfile[@]}"; do
-    out=${jj_outfile[$root]}
-    [[ -s $out ]] || continue
+for ((i = 0; i < ${#jj_roots[@]}; i++)); do
+    out=${jj_outfiles[$i]:-}
+    [[ -n $out && -s $out ]] || continue
     IFS= read -r label < "$out"
-    root_label["$root"]=$label
-    cache_key["$root"]=${root_key[$root]}
-    cache_label["$root"]=$label
+    jj_labels[$i]=$label
+
+    cache_index=-1
+    for ((j = 0; j < ${#cache_roots[@]}; j++)); do
+        if [[ ${cache_roots[$j]} == "${jj_roots[$i]}" ]]; then
+            cache_index=$j
+            break
+        fi
+    done
+    if ((cache_index < 0)); then
+        cache_index=${#cache_roots[@]}
+        cache_roots[$cache_index]=${jj_roots[$i]}
+    fi
+    cache_keys[$cache_index]=${jj_keys[$i]}
+    cache_labels[$cache_index]=$label
     cache_dirty=1
 done
 
 if (( cache_dirty )); then
     mkdir -p "${cache_file%/*}" 2>/dev/null
     {
-        for root in "${!cache_key[@]}"; do
-            printf '%s\t%s\t%s\n' "$root" "${cache_key[$root]}" "${cache_label[$root]}"
+        for ((i = 0; i < ${#cache_roots[@]}; i++)); do
+            printf '%s\t%s\t%s\n' "${cache_roots[$i]}" "${cache_keys[$i]}" "${cache_labels[$i]}"
         done
     } >| "$cache_file.$$" 2>/dev/null && mv -f "$cache_file.$$" "$cache_file" 2>/dev/null
 fi
 
 declare -a tmux_cmd=()
 
-for session_id in "${session_ids[@]}"; do
-    label=${session_label[$session_id]:-}
-    root=${session_jjroot[$session_id]:-}
-    if [[ -n $root && -n ${root_label[$root]:-} ]]; then
-        label=${root_label[$root]}
+for ((i = 0; i < ${#session_ids[@]}; i++)); do
+    session_id=${session_ids[$i]}
+    label=${session_labels[$i]:-}
+    root=${session_jjroots[$i]:-}
+    if [[ -n $root ]]; then
+        for ((j = 0; j < ${#jj_roots[@]}; j++)); do
+            if [[ ${jj_roots[$j]} == "$root" && -n ${jj_labels[$j]:-} ]]; then
+                label=${jj_labels[$j]}
+                break
+            fi
+        done
     fi
 
     (( ${#tmux_cmd[@]} )) && tmux_cmd+=(\;)
