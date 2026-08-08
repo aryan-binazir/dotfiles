@@ -24,36 +24,6 @@ def run(argv: list[str], cwd: Path) -> int:
     return subprocess.run(argv, cwd=cwd).returncode
 
 
-def has_changes(repo: Path) -> bool:
-    result = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=repo,
-        stdout=subprocess.PIPE,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"git status failed in {repo}")
-    return bool(result.stdout)
-
-
-def stash_changes(repo: Path) -> int:
-    if not has_changes(repo):
-        print(f"[{repo}] no changes to stash", flush=True)
-        return 0
-
-    return run(
-        [
-            "git",
-            "stash",
-            "push",
-            "--include-untracked",
-            "-m",
-            "bball_refresh auto-stash before gb",
-        ],
-        repo,
-    )
-
-
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Refresh the local bball-lab k3d stack.",
@@ -82,18 +52,10 @@ def main(argv: list[str] | None = None) -> int:
         print("dev mode: skipping git stash, gb, and branch changes", flush=True)
         return refresh_stack()
 
-    try:
-        for repo in REPOS:
-            status = stash_changes(repo)
-            if status != 0:
-                return status
-
-            status = run(["gb"], repo)
-            if status != 0:
-                return status
-    except RuntimeError as error:
-        print(error, file=sys.stderr)
-        return 1
+    for repo in REPOS:
+        status = run(["gb"], repo)
+        if status != 0:
+            return status
 
     return refresh_stack()
 

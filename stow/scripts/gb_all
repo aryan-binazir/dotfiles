@@ -7,18 +7,16 @@
 
 A convenience wrapper, nothing more. For each ~/repos/go-<n> clone it:
 
-  1. Preserves the current working copy as its existing jj change.
-  2. Runs `gb`, which initializes a colocated jj repo when needed, fetches
-     origin, and creates a fresh change with main@origin as its parent.
+  1. Preserves tracked and untracked work in a Git stash when needed.
+  2. Runs `gb`, which fetches origin, switches to main, and fast-forwards it to
+     origin/main.
 
-It NEVER deletes branches or abandons changes. Clones are processed in parallel;
+It NEVER deletes branches or rewrites changes. Clones are processed in parallel;
 each logs a single line to stderr when it finishes (ready / skipped / failed,
 with elapsed time). Full command output is shown only for failures. One failing
 clone never aborts the rest — a summary line closes the run.
 
-Clones mid-rebase/merge/bisect are skipped untouched. A detached Git HEAD is
-skipped only before jj initialization; detached HEAD is normal in a colocated
-jj repo.
+Clones mid-rebase/merge/bisect or on a detached HEAD are skipped untouched.
 
 Examples:
   gb_all            # run gb on all go-<n> clones
@@ -64,17 +62,14 @@ def repository_state(clone: Path) -> str | None:
     if (git_dir / "sequencer").exists():
         return "sequencer in progress"
     head = run(["git", "symbolic-ref", "-q", "HEAD"], clone)
-    if not (clone / ".jj").is_dir() and head.returncode != 0:
+    if head.returncode != 0:
         return "detached HEAD"
     return None
 
 
 def has_work(clone: Path) -> bool:
-    """True if gb will preserve file changes in the current change."""
-    if (clone / ".jj").is_dir():
-        status = run(["jj", "diff", "--summary"], clone)
-    else:
-        status = run(["git", "status", "--porcelain"], clone)
+    """True if gb will preserve file changes in a Git stash."""
+    status = run(["git", "status", "--porcelain"], clone)
     return bool(status.stdout.strip())
 
 
@@ -117,9 +112,9 @@ def process(clone: Path) -> Result:
     except Exception as error:  # never let one clone abort the whole run
         return done("fail", f"unexpected error: {error}")
 
-    note = "ready on main@origin"
+    note = "ready on main with origin/main fetched"
     if preserved_work:
-        note += ", preserved previous jj change"
+        note += ", preserved previous work in Git stash"
     return done("ok", note)
 
 
