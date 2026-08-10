@@ -113,6 +113,28 @@ def main() -> int:
         return branch_exists.returncode
 
     if branch_exists.returncode == 0:
+        worktrees = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+        )
+        if worktrees.returncode != 0:
+            return worktrees.returncode
+
+        listed_path = None
+        for line in worktrees.stdout.splitlines():
+            if line.startswith("worktree "):
+                listed_path = Path(line.removeprefix("worktree "))
+            elif line == f"branch {branch_ref}" and listed_path is not None:
+                print(
+                    f"branch exists: {branch}; using existing checkout: "
+                    f"{listed_path}",
+                    file=sys.stderr,
+                )
+                print(listed_path)
+                return 0
+
         print(f"branch exists: {branch}; checking it out", file=sys.stderr)
         command = ["git", "worktree", "add", str(worktree), branch]
     else:
