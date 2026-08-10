@@ -36,6 +36,36 @@ alias acdl='acd --model gpt-5.6-luna -c model_reasoning_effort=xhigh'
 alias acu='cursor-agent --sandbox enabled'
 alias h='hunk diff origin/main...HEAD'
 
+gw() {
+  if (( $# < 1 || $# > 2 )); then
+    echo "error: usage: gw <name> [acc|acd]" >&2
+    return 1
+  fi
+
+  local agent="${2:-}"
+  local worktree
+
+  case "$agent" in
+    ""|acc|acd) ;;
+    *)
+      echo "error: unknown command: $agent (expected acc, or acd)" >&2
+      return 1
+      ;;
+  esac
+
+  worktree="$(command gw "$1")" || return
+  builtin cd "$worktree" || return
+
+  case "$agent" in
+    acc) claude --permission-mode auto ;;
+    acd)
+      codex --sandbox workspace-write --ask-for-approval on-request \
+        -c approvals_reviewer=auto_review \
+        -c sandbox_workspace_write.network_access=true
+      ;;
+  esac
+}
+
 # Re-enable hashing before loading NVM (fixes "hash: hashing disabled" error)
 set -h
 
