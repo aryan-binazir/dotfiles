@@ -104,7 +104,21 @@ def main() -> int:
         return 1
 
     worktree = root / "_scratch" / "worktrees" / name
-    if run(["git", "worktree", "add", "-b", branch, str(worktree), "main"], cwd=root) != 0:
+    branch_ref = f"refs/heads/{branch}"
+    branch_exists = subprocess.run(
+        ["git", "show-ref", "--verify", "--quiet", branch_ref],
+        cwd=root,
+    )
+    if branch_exists.returncode not in (0, 1):
+        return branch_exists.returncode
+
+    if branch_exists.returncode == 0:
+        print(f"branch exists: {branch}; checking it out", file=sys.stderr)
+        command = ["git", "worktree", "add", str(worktree), branch]
+    else:
+        command = ["git", "worktree", "add", "-b", branch, str(worktree), "main"]
+
+    if run(command, cwd=root) != 0:
         return 1
 
     print(worktree)
