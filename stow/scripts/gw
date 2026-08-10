@@ -83,6 +83,12 @@ def main() -> int:
     root = git_root()
     if root is None:
         return 1
+    if (root / ".git").is_file():
+        print(
+            "error: run gw from the primary checkout, not a linked worktree",
+            file=sys.stderr,
+        )
+        return 1
 
     branch_check = subprocess.run(
         ["git", "check-ref-format", "--branch", branch],
@@ -98,7 +104,6 @@ def main() -> int:
         return 1
 
     worktree = root / "_scratch" / "worktrees" / name
-    worktree.parent.mkdir(parents=True, exist_ok=True)
     if run(["git", "worktree", "add", "-b", branch, str(worktree), "main"], cwd=root) != 0:
         return 1
 
