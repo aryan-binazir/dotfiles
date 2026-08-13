@@ -6,7 +6,7 @@ alias acd='codex --sandbox workspace-write --ask-for-approval on-request -c appr
 alias acds='acd --model gpt-5.6-sol -c model_reasoning_effort=high'
 alias acdt='acd --model gpt-5.6-terra -c model_reasoning_effort=high'
 alias acdl='acd --model gpt-5.6-luna -c model_reasoning_effort=xhigh'
-alias acu='cursor-agent --sandbox'
+alias acu='cursor-agent --auto-review --sandbox enabled'
 alias lg='lazygit'
 alias h='hunk diff origin/main...HEAD'
 alias box='ssh ar@box.local'
