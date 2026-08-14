@@ -96,6 +96,19 @@ def main() -> int:
     if root is None:
         return 1
 
+    if git("symbolic-ref", "-q", "HEAD", root=root, capture=True).returncode:
+        print("error: refusing to leave a detached Git HEAD", file=sys.stderr)
+        return 1
+
+    operation = in_progress_operation(root)
+    if operation:
+        print(f"error: refusing to interrupt {operation}", file=sys.stderr)
+        return 1
+
+    result = git("fetch", "--prune", "origin", root=root)
+    if result.returncode != 0:
+        return result.returncode
+
     branch, cmd = parse_args(sys.argv[1:], root)
 
     if not branch or branch.startswith("-"):
@@ -104,15 +117,6 @@ def main() -> int:
 
     if git("check-ref-format", "--branch", branch, root=root, capture=True).returncode:
         print(f"error: invalid branch name: {branch}", file=sys.stderr)
-        return 1
-
-    if git("symbolic-ref", "-q", "HEAD", root=root, capture=True).returncode:
-        print("error: refusing to leave a detached Git HEAD", file=sys.stderr)
-        return 1
-
-    operation = in_progress_operation(root)
-    if operation:
-        print(f"error: refusing to interrupt {operation}", file=sys.stderr)
         return 1
 
     status = git("status", "--porcelain", root=root, capture=True)
@@ -133,10 +137,6 @@ def main() -> int:
             "gb: stashed local changes; restore with git stash pop",
             file=sys.stderr,
         )
-
-    result = git("fetch", "--prune", "origin", branch, root=root)
-    if result.returncode != 0:
-        return result.returncode
 
     local_branch = git(
         "show-ref", "--verify", "--quiet", f"refs/heads/{branch}", root=root
