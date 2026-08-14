@@ -6,24 +6,9 @@
 
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
-
-
-AGENT_COMMANDS = {
-    "acc": ["claude", "--permission-mode", "auto"],
-    "acd": [
-        "codex",
-        "--sandbox",
-        "workspace-write",
-        "--ask-for-approval",
-        "on-request",
-        "-c",
-        "approvals_reviewer=auto_review",
-        "-c",
-        "sandbox_workspace_write.network_access=true",
-    ],
-}
 
 
 def run(command: list[str], *, cwd: Path | None = None) -> int:
@@ -51,31 +36,48 @@ def git_root() -> Path | None:
     return Path(result.stdout.strip())
 
 
-def main() -> int:
-    args = sys.argv[1:]
-    if not args:
-        branch = "main"
-        cmd = ""
-    elif args[0] in AGENT_COMMANDS:
-        branch = "main"
-        cmd = args[0]
-    else:
-        branch = args[0]
-        cmd = args[1] if len(args) >= 2 else ""
+def existing_branch(root: Path, name: str) -> bool:
+    for ref in (f"refs/heads/{name}", f"refs/remotes/origin/{name}"):
+        result = subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", ref],
+            cwd=root,
+        )
+        if result.returncode == 0:
+            return True
+    return False
 
-    if len(args) > 2 or (args and args[0] in AGENT_COMMANDS and len(args) > 1):
-        print("error: usage: gb [branch] [acc|acd]", file=sys.stderr)
+
+def parse_args(args: list[str], root: Path) -> tuple[str, list[str]]:
+    if not args:
+        return "main", []
+    if existing_branch(root, args[0]):
+        return args[0], args[1:]
+    return "main", args
+
+
+def exec_command(cmd: list[str]) -> int:
+    try:
+        os.execvp(cmd[0], cmd)
+    except FileNotFoundError:
+        pass
+    quoted = " ".join(shlex.quote(part) for part in cmd)
+    try:
+        os.execvp("bash", ["bash", "-ic", quoted])
+    except FileNotFoundError:
+        print(f"error: command not found: {cmd[0]}", file=sys.stderr)
+        return 127
+    return 0
+
+
+def main() -> int:
+    root = git_root()
+    if root is None:
         return 1
-    if cmd and cmd not in AGENT_COMMANDS:
-        print(f"unknown command: {cmd} (expected acc, or acd)", file=sys.stderr)
-        return 1
+
+    branch, cmd = parse_args(sys.argv[1:], root)
 
     if not branch or branch.startswith("-"):
         print(f"error: invalid branch name: {branch}", file=sys.stderr)
-        return 1
-
-    root = git_root()
-    if root is None:
         return 1
 
     branch_check = subprocess.run(
@@ -170,12 +172,7 @@ def main() -> int:
         return result
 
     if cmd:
-        launch = AGENT_COMMANDS[cmd]
-        try:
-            os.execvp(launch[0], launch)
-        except FileNotFoundError:
-            print(f"error: command not found: {launch[0]}", file=sys.stderr)
-            return 127
+        return exec_command(cmd)
 
     return 0
 
