@@ -32,136 +32,90 @@ import subprocess
 import sys
 
 
+def die(message: str, code: int = 1) -> None:
+    print(f"error: {message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
 def run(command: list[str], *, cwd: Path) -> int:
-    try:
-        return subprocess.run(command, cwd=cwd, stdout=sys.stderr).returncode
-    except FileNotFoundError:
-        print(f"error: command not found: {command[0]}", file=sys.stderr)
-        return 127
+    return subprocess.run(command, cwd=cwd, stdout=sys.stderr).returncode
 
 
-def git_out(args: list[str], *, cwd: Path | None = None) -> tuple[int, str]:
-    try:
-        result = subprocess.run(
-            ["git", *args],
-            cwd=cwd,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-    except FileNotFoundError:
-        print("error: command not found: git", file=sys.stderr)
-        return 127, ""
-    return result.returncode, result.stdout
+def git(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
 
 
-def git_root() -> Path | None:
-    code, stdout = git_out(["rev-parse", "--show-toplevel"])
-    if code == 127:
-        return None
-    if code != 0:
-        print("error: not inside a Git repository", file=sys.stderr)
-        return None
-    return Path(stdout.removesuffix("\n"))
-
-
-def resolve_git_path(root: Path, raw: str) -> Path:
-    path = Path(raw.removesuffix("\n"))
-    return path.resolve() if path.is_absolute() else (root / path).resolve()
-
-
-def is_linked_worktree(root: Path) -> bool | None:
-    code, git_dir = git_out(["rev-parse", "--git-dir"], cwd=root)
-    if code != 0:
-        return None
-    code, common_dir = git_out(["rev-parse", "--git-common-dir"], cwd=root)
-    if code != 0:
-        return None
-    return resolve_git_path(root, git_dir) != resolve_git_path(root, common_dir)
-
-
-def existing_worktree(root: Path, branch_ref: str) -> Path | None | int:
-    """Return the live path for branch_ref, None if absent, or an exit code."""
-    try:
-        result = subprocess.run(
-            ["git", "worktree", "list", "--porcelain", "-z"],
-            cwd=root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-    except FileNotFoundError:
-        print("error: command not found: git", file=sys.stderr)
-        return 127
+def git_root() -> Path:
+    result = git(["rev-parse", "--show-toplevel"])
     if result.returncode != 0:
-        message = result.stderr.decode().strip() or "git worktree list failed"
-        print(f"error: {message}", file=sys.stderr)
-        return result.returncode
+        die("not inside a Git repository")
+    return Path(result.stdout.rstrip("\n"))
+
+
+def is_linked_worktree(root: Path) -> bool:
+    result = git(["rev-parse", "--git-dir", "--git-common-dir"], cwd=root)
+    if result.returncode != 0:
+        die("failed to inspect git directories")
+    git_dir, common_dir = result.stdout.splitlines()[:2]
+    return (root / git_dir).resolve() != (root / common_dir).resolve()
+
+
+def existing_worktree(root: Path, branch_ref: str) -> Path | None:
+    result = git(["worktree", "list", "--porcelain"], cwd=root)
+    if result.returncode != 0:
+        die(result.stderr.strip() or "git worktree list failed", result.returncode)
 
     branch_name = branch_ref.removeprefix("refs/heads/")
-    for record in result.stdout.split(b"\0\0"):
-        if not record:
-            continue
+    for record in result.stdout.split("\n\n"):
         path: Path | None = None
         branch: str | None = None
-        prunable = False
-        for line in record.split(b"\0"):
-            if not line:
-                continue
-            if line == b"prunable" or line.startswith(b"prunable "):
-                prunable = True
-            elif line.startswith(b"worktree "):
-                path = Path(line.removeprefix(b"worktree ").decode())
-            elif line.startswith(b"branch "):
-                branch = line.removeprefix(b"branch ").decode()
+        for line in record.splitlines():
+            if line.startswith("worktree "):
+                path = Path(line.removeprefix("worktree "))
+            elif line.startswith("branch "):
+                branch = line.removeprefix("branch ")
         if branch != branch_ref:
             continue
-        if prunable or path is None or not path.is_dir():
-            detail = path if path is not None else branch_name
-            print(
-                f"error: worktree for {branch_name} is missing or prunable "
-                f"({detail}); unlock if needed, then run: git worktree prune",
-                file=sys.stderr,
+        if path is not None and path.is_dir():
+            return path
+        status = run(["git", "worktree", "prune"], cwd=root)
+        if status != 0:
+            die(
+                f"worktree for {branch_name} is missing ({path}); "
+                "run: git worktree prune",
+                status,
             )
-            return 1
-        return path
+        return None
     return None
 
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("error: usage: gw <name>", file=sys.stderr)
-        return 1
+        die("usage: gw <name>")
 
     name = sys.argv[1].removeprefix("aryan-binazir/")
     branch = f"aryan-binazir/{name}"
-    if not name or name.startswith("-") or "/" in name:
-        print(f"error: invalid worktree name: {name}", file=sys.stderr)
-        return 1
+    if (
+        not name
+        or name.startswith("-")
+        or "/" in name
+        or git(["check-ref-format", "--branch", branch]).returncode != 0
+    ):
+        die(f"invalid worktree name: {name}")
 
     root = git_root()
-    if root is None:
-        return 1
-
-    linked = is_linked_worktree(root)
-    if linked is None:
-        print("error: failed to inspect git directories", file=sys.stderr)
-        return 1
-    if linked:
-        print(
-            "error: run gw from the primary checkout, not a linked worktree",
-            file=sys.stderr,
-        )
-        return 1
-
-    branch_check = subprocess.run(
-        ["git", "check-ref-format", "--branch", branch],
-        cwd=root,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    if branch_check.returncode != 0:
-        print(f"error: invalid worktree name: {name}", file=sys.stderr)
-        return 1
+    if is_linked_worktree(root):
+        die("run gw from the primary checkout, not a linked worktree")
 
     status = run(["gb"], cwd=root)
     if status != 0:
@@ -169,18 +123,12 @@ def main() -> int:
 
     worktree = root / "_scratch" / "worktrees" / name
     branch_ref = f"refs/heads/{branch}"
-    branch_exists = subprocess.run(
-        ["git", "show-ref", "--verify", "--quiet", branch_ref],
-        cwd=root,
-    )
+    branch_exists = git(["show-ref", "--verify", "--quiet", branch_ref], cwd=root)
     if branch_exists.returncode not in (0, 1):
-        print("error: git show-ref failed", file=sys.stderr)
-        return branch_exists.returncode
+        die("git show-ref failed", branch_exists.returncode)
 
     if branch_exists.returncode == 0:
         existing = existing_worktree(root, branch_ref)
-        if isinstance(existing, int):
-            return existing
         if existing is not None:
             print(
                 f"branch exists: {branch}; using existing checkout: {existing}",
@@ -205,8 +153,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except KeyboardInterrupt:
-        print("error: interrupted", file=sys.stderr)
-        raise SystemExit(130)
-    except Exception as error:
-        print(f"error: {error}", file=sys.stderr)
-        raise SystemExit(1)
+        die("interrupted", 130)
+    except FileNotFoundError as error:
+        die(f"command not found: {error.filename}", 127)
