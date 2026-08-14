@@ -62,7 +62,7 @@ def main() -> int:
         print("error: usage: gw <name>", file=sys.stderr)
         return 1
 
-    name = sys.argv[1]
+    name = sys.argv[1].removeprefix("aryan-binazir/")
     branch = f"aryan-binazir/{name}"
     if not name or name.startswith("-") or "/" in name:
         print(f"error: invalid worktree name: {name}", file=sys.stderr)
