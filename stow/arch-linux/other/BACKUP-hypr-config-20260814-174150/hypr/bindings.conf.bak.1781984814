@@ -1,0 +1,93 @@
+# Application bindings
+bindd = SUPER, RETURN, Terminal, exec, uwsm-app -- xdg-terminal-exec --dir="$(omarchy-cmd-terminal-cwd)"
+bindd = SUPER ALT, RETURN, Tmux, exec, uwsm-app -- xdg-terminal-exec --dir="$(omarchy-cmd-terminal-cwd)" bash -c "tmux attach || tmux new -s Work"
+bindd = SUPER SHIFT, RETURN, Browser, exec, omarchy-launch-browser
+bindd = SUPER SHIFT, F, File manager, exec, uwsm-app -- nautilus --new-window
+bindd = SUPER ALT SHIFT, F, File manager (cwd), exec, uwsm-app -- nautilus --new-window "$(omarchy-cmd-terminal-cwd)"
+bindd = SUPER SHIFT, B, Browser, exec, omarchy-launch-browser
+bindd = SUPER SHIFT ALT, B, Browser (private), exec, omarchy-launch-browser --private
+bindd = SUPER SHIFT, M, Music, exec, omarchy-launch-or-focus spotify
+bindd = SUPER SHIFT ALT, M, Music TUI, exec, omarchy-launch-or-focus-tui cliamp
+bindd = SUPER SHIFT, N, Editor, exec, omarchy-launch-editor
+bindd = SUPER SHIFT, D, Docker, exec, omarchy-launch-tui lazydocker
+bindd = SUPER SHIFT, G, Signal, exec, omarchy-launch-or-focus ^signal$ "uwsm-app -- signal-desktop"
+bindd = SUPER SHIFT, O, Obsidian, exec, omarchy-launch-or-focus ^obsidian$ "uwsm-app -- obsidian"
+bindd = SUPER SHIFT, W, Typora, exec, uwsm-app -- typora --enable-wayland-ime
+bindd = SUPER SHIFT, SLASH, Passwords, exec, uwsm-app -- 1password
+
+# If your web app url contains #, type it as ## to prevent hyprland treating it as a comment
+bindd = SUPER SHIFT, A, ChatGPT, exec, omarchy-launch-webapp "https://chatgpt.com"
+bindd = SUPER SHIFT ALT, A, Grok, exec, omarchy-launch-webapp "https://grok.com"
+bindd = SUPER SHIFT, C, Calendar, exec, omarchy-launch-webapp "https://app.hey.com/calendar/weeks/"
+bindd = SUPER SHIFT, E, Email, exec, omarchy-launch-webapp "https://app.hey.com"
+bindd = SUPER SHIFT, Y, YouTube, exec, omarchy-launch-webapp "https://youtube.com/"
+bindd = SUPER SHIFT ALT, G, WhatsApp, exec, omarchy-launch-or-focus-webapp WhatsApp "https://web.whatsapp.com/"
+bindd = SUPER SHIFT CTRL, G, Google Messages, exec, omarchy-launch-or-focus-webapp "Google Messages" "https://messages.google.com/web/conversations"
+bindd = SUPER SHIFT, P, Google Photos, exec, omarchy-launch-or-focus-webapp "Google Photos" "https://photos.google.com/"
+bindd = SUPER SHIFT, X, X, exec, omarchy-launch-webapp "https://x.com/"
+bindd = SUPER SHIFT ALT, X, X Post, exec, omarchy-launch-webapp "https://x.com/compose/post"
+
+# Add extra bindings
+# bind = SUPER SHIFT, R, exec, alacritty -e ssh your-server
+
+# Overwrite existing bindings, like putting Omarchy Menu on Super + Space
+# unbind = SUPER, SPACE
+# bindd = SUPER, SPACE, Omarchy menu, exec, omarchy-menu
+
+# Logitech MX Keys
+# bind = SUPER SHIFT, S, exec, omarchy-capture-screenshot      # Print Screen Button
+# bind = SUPER, H, exec, voxtype record toggle                 # Dictation Button
+# bind = SUPER, PERIOD, exec, omarchy-launch-walker -m symbols # Emoji Button
+
+# Restored personal convenience bindings
+bindd = SUPER, Q, Close window, killactive,
+bindd = SUPER, Z, Voice input, exec, voxtype record toggle
+bindd = ALT, Z, Voice input, exec, voxtype record toggle
+bindd = ALT, code:52, Voice input, exec, voxtype record toggle
+
+bindd = ALT, RETURN, Terminal, exec, uwsm-app -- xdg-terminal-exec --dir="$(omarchy-cmd-terminal-cwd)"
+bindd = ALT, F, File manager, exec, uwsm-app -- nautilus --new-window
+bindd = ALT SHIFT, F, File manager (cwd), exec, uwsm-app -- nautilus --new-window "$(omarchy-cmd-terminal-cwd)"
+bindd = ALT, B, Browser, exec, omarchy-launch-browser
+bindd = ALT SHIFT, B, Browser (private), exec, omarchy-launch-browser --private
+bindd = ALT, M, Music, exec, omarchy-launch-or-focus spotify
+bindd = ALT, N, Editor, exec, omarchy-launch-editor
+bindd = ALT, R, Activity, exec, omarchy-launch-tui btop
+bindd = ALT, D, Docker, exec, omarchy-launch-tui lazydocker
+bindd = ALT, G, Gemini, exec, omarchy-launch-webapp "https://gemini.google.com"
+bindd = ALT, O, Obsidian, exec, omarchy-launch-or-focus ^obsidian$ "uwsm-app -- obsidian"
+bindd = ALT, SLASH, Passwords, exec, uwsm-app -- 1password
+bindd = ALT SHIFT, S, Suspend, exec, systemctl suspend
+
+bindd = ALT, A, ChatGPT, exec, omarchy-launch-webapp "https://chatgpt.com"
+bindd = ALT SHIFT, A, Grok, exec, omarchy-launch-webapp "https://grok.com"
+bindd = ALT, C, Claude, exec, omarchy-launch-webapp "https://claude.ai"
+bindd = ALT, Y, YouTube, exec, omarchy-launch-or-focus-webapp YouTube "https://youtube.com/"
+bindd = ALT SHIFT, G, WhatsApp, exec, omarchy-launch-or-focus-webapp WhatsApp "https://web.whatsapp.com/"
+bindd = ALT CTRL, G, Google Messages, exec, omarchy-launch-or-focus-webapp "Google Messages" "https://messages.google.com/web/conversations"
+bindd = ALT, X, X, exec, omarchy-launch-webapp "https://x.com/"
+bindd = ALT SHIFT, X, X Post, exec, omarchy-launch-webapp "https://x.com/compose/post"
+
+bindd = ALT, SPACE, Launch apps, exec, walker -p "Start..."
+
+bind = ALT, 1, workspace, 1
+bind = ALT, 2, workspace, 2
+bind = ALT, 3, workspace, 3
+bind = ALT, 4, workspace, 4
+bind = ALT, 5, workspace, 5
+bind = ALT, 6, workspace, 6
+bind = ALT, 7, workspace, 7
+bind = ALT, 8, workspace, 8
+bind = ALT, 9, workspace, 9
+bind = ALT, 0, workspace, 10
+
+bind = ALT SHIFT, 1, movetoworkspace, 1
+bind = ALT SHIFT, 2, movetoworkspace, 2
+bind = ALT SHIFT, 3, movetoworkspace, 3
+bind = ALT SHIFT, 4, movetoworkspace, 4
+bind = ALT SHIFT, 5, movetoworkspace, 5
+bind = ALT SHIFT, 6, movetoworkspace, 6
+bind = ALT SHIFT, 7, movetoworkspace, 7
+bind = ALT SHIFT, 8, movetoworkspace, 8
+bind = ALT SHIFT, 9, movetoworkspace, 9
+bind = ALT SHIFT, 0, movetoworkspace, 10
