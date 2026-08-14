@@ -10,47 +10,57 @@ import shlex
 import subprocess
 import sys
 
+GIT_STATES = (
+    ("MERGE_HEAD", "merge"),
+    ("rebase-merge", "rebase"),
+    ("rebase-apply", "rebase"),
+    ("CHERRY_PICK_HEAD", "cherry-pick"),
+    ("REVERT_HEAD", "revert"),
+    ("BISECT_LOG", "bisect"),
+    ("sequencer", "sequencer"),
+)
 
-def run(command: list[str], *, cwd: Path | None = None) -> int:
-    try:
-        return subprocess.run(command, cwd=cwd).returncode
-    except FileNotFoundError:
-        print(f"error: command not found: {command[0]}", file=sys.stderr)
-        return 127
+
+def git(
+    *args: str,
+    root: Path | None = None,
+    capture: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=root,
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.DEVNULL if capture else None,
+    )
 
 
 def git_root() -> Path | None:
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
+        result = git("rev-parse", "--show-toplevel", capture=True)
     except FileNotFoundError:
         print("error: command not found: git", file=sys.stderr)
         return None
     if result.returncode != 0:
         print("error: not inside a Git repository", file=sys.stderr)
         return None
-    return Path(result.stdout.strip())
+    return Path(result.stdout.removesuffix("\n"))
 
 
 def existing_branch(root: Path, name: str) -> bool:
     for ref in (f"refs/heads/{name}", f"refs/remotes/origin/{name}"):
-        result = subprocess.run(
-            ["git", "show-ref", "--verify", "--quiet", ref],
-            cwd=root,
-        )
+        result = git("show-ref", "--verify", "--quiet", ref, root=root)
         if result.returncode == 0:
             return True
+        if result.returncode != 1:
+            raise RuntimeError(
+                f"git show-ref failed with exit status {result.returncode}"
+            )
     return False
 
 
 def parse_args(args: list[str], root: Path) -> tuple[str, list[str]]:
-    if not args:
-        return "main", []
-    if existing_branch(root, args[0]):
+    if args and existing_branch(root, args[0]):
         return args[0], args[1:]
     return "main", args
 
@@ -58,15 +68,27 @@ def parse_args(args: list[str], root: Path) -> tuple[str, list[str]]:
 def exec_command(cmd: list[str]) -> int:
     try:
         os.execvp(cmd[0], cmd)
-    except FileNotFoundError:
+    except OSError:
         pass
-    quoted = " ".join(shlex.quote(part) for part in cmd)
+    shell = os.environ.get("SHELL", "bash")
     try:
-        os.execvp("bash", ["bash", "-ic", quoted])
-    except FileNotFoundError:
+        os.execvp(shell, [shell, "-ic", shlex.join(cmd)])
+    except OSError:
         print(f"error: command not found: {cmd[0]}", file=sys.stderr)
-        return 127
-    return 0
+    return 127
+
+
+def in_progress_operation(root: Path) -> str | None:
+    result = git("rev-parse", "--git-dir", root=root, capture=True)
+    if result.returncode != 0:
+        raise RuntimeError("cannot locate the Git directory")
+    git_dir = Path(result.stdout.removesuffix("\n"))
+    if not git_dir.is_absolute():
+        git_dir = root / git_dir
+    for name, label in GIT_STATES:
+        if (git_dir / name).exists():
+            return label
+    return None
 
 
 def main() -> int:
@@ -80,109 +102,72 @@ def main() -> int:
         print(f"error: invalid branch name: {branch}", file=sys.stderr)
         return 1
 
-    branch_check = subprocess.run(
-        ["git", "check-ref-format", "--branch", branch],
-        cwd=root,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    if branch_check.returncode != 0:
+    if git("check-ref-format", "--branch", branch, root=root, capture=True).returncode:
         print(f"error: invalid branch name: {branch}", file=sys.stderr)
         return 1
 
-    head = subprocess.run(
-        ["git", "symbolic-ref", "-q", "HEAD"],
-        cwd=root,
-        stdout=subprocess.DEVNULL,
-    )
-    if head.returncode != 0:
+    if git("symbolic-ref", "-q", "HEAD", root=root, capture=True).returncode:
         print("error: refusing to leave a detached Git HEAD", file=sys.stderr)
         return 1
 
-    repository_states = (
-        ("merge", "MERGE_HEAD"),
-        ("rebase", "rebase-merge"),
-        ("rebase", "rebase-apply"),
-        ("cherry-pick", "CHERRY_PICK_HEAD"),
-        ("revert", "REVERT_HEAD"),
-        ("bisect", "BISECT_LOG"),
-        ("sequencer operation", "sequencer"),
-    )
-    for state_name, git_path in repository_states:
-        path_result = subprocess.run(
-            ["git", "rev-parse", "--git-path", git_path],
-            cwd=root,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-        if path_result.returncode != 0:
-            return path_result.returncode
-        state_path = Path(path_result.stdout.strip())
-        if not state_path.is_absolute():
-            state_path = root / state_path
-        if state_path.exists():
-            print(f"error: refusing to interrupt {state_name}", file=sys.stderr)
-            return 1
+    operation = in_progress_operation(root)
+    if operation:
+        print(f"error: refusing to interrupt {operation}", file=sys.stderr)
+        return 1
 
-    status = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=root,
-        text=True,
-        stdout=subprocess.PIPE,
-    )
+    status = git("status", "--porcelain", root=root, capture=True)
     if status.returncode != 0:
         return status.returncode
     if status.stdout:
-        result = run(
-            [
-                "git",
-                "stash",
-                "push",
-                "--include-untracked",
-                "-m",
-                f"gb auto-stash before syncing {branch}",
-            ],
-            cwd=root,
+        result = git(
+            "stash",
+            "push",
+            "--include-untracked",
+            "-m",
+            f"gb auto-stash before syncing {branch}",
+            root=root,
         )
-        if result != 0:
-            return result
+        if result.returncode != 0:
+            return result.returncode
+        print(
+            "gb: stashed local changes; restore with git stash pop",
+            file=sys.stderr,
+        )
 
-    result = run(["git", "fetch", "--prune", "origin", branch], cwd=root)
-    if result != 0:
-        return result
+    result = git("fetch", "--prune", "origin", branch, root=root)
+    if result.returncode != 0:
+        return result.returncode
 
-    local_branch = subprocess.run(
-        ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
-        cwd=root,
+    local_branch = git(
+        "show-ref", "--verify", "--quiet", f"refs/heads/{branch}", root=root
     )
     if local_branch.returncode == 0:
-        switch = ["git", "switch", branch]
+        switch = ("switch", branch)
     elif local_branch.returncode == 1:
-        switch = ["git", "switch", "--track", "-c", branch, f"origin/{branch}"]
+        switch = ("switch", "--track", "-c", branch, f"origin/{branch}")
     else:
         return local_branch.returncode
 
-    result = run(switch, cwd=root)
-    if result != 0:
-        return result
+    result = git(*switch, root=root)
+    if result.returncode != 0:
+        return result.returncode
 
-    result = run(["git", "merge", "--ff-only", f"origin/{branch}"], cwd=root)
-    if result != 0:
-        return result
+    result = git("merge", "--ff-only", f"origin/{branch}", root=root)
+    if result.returncode != 0:
+        return result.returncode
 
     if cmd:
         return exec_command(cmd)
-
     return 0
 
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(main())
+        code = main()
     except KeyboardInterrupt:
         print("error: interrupted", file=sys.stderr)
-        raise SystemExit(130)
+        code = 130
     except Exception as error:
         print(f"error: {error}", file=sys.stderr)
-        raise SystemExit(1)
+        code = 1
+    raise SystemExit(code)
