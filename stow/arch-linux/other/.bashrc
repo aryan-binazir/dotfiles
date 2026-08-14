@@ -38,33 +38,21 @@ alias h='hunk diff origin/main...HEAD'
 
 # Keep this wrapper in sync with the copyable version in stow/scripts/gw.
 gw() {
-  if (( $# < 1 || $# > 2 )); then
-    echo "error: usage: gw <name> [acc|acd]" >&2
+  if (( $# < 1 )); then
+    echo "error: usage: gw <name> [command...]" >&2
     return 1
   fi
 
-  local agent="${2:-}"
+  local name="$1"
+  shift
   local worktree
 
-  case "$agent" in
-    ""|acc|acd) ;;
-    *)
-      echo "error: unknown command: $agent (expected acc, or acd)" >&2
-      return 1
-      ;;
-  esac
-
-  worktree="$(command gw "$1")" || return
+  worktree="$(command gw "$name")" || return
   builtin cd "$worktree" || return
 
-  case "$agent" in
-    acc) claude --permission-mode auto ;;
-    acd)
-      codex --sandbox workspace-write --ask-for-approval on-request \
-        -c approvals_reviewer=auto_review \
-        -c sandbox_workspace_write.network_access=true
-      ;;
-  esac
+  (( $# == 0 )) && return 0
+  # Re-eval so shell aliases (acc, acd, acu, acdl, ...) expand.
+  eval "$(printf '%q ' "$@")"
 }
 
 # Re-enable hashing before loading NVM (fixes "hash: hashing disabled" error)
