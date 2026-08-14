@@ -29,7 +29,8 @@ dir=$parent
 done
 
 [[ $gitdir == */worktrees/* ]] || return 1
-[[ -n $gitdir && -r $gitdir/HEAD ]] || return 1
+[[ -f $gitdir/commondir ]] || return 1
+[[ -r $gitdir/HEAD ]] || return 1
 IFS= read -r head < "$gitdir/HEAD" || return 1
 
 case $head in
@@ -44,6 +45,8 @@ aryanbinazir/*) label=${label#aryanbinazir/} ;;
 aryan-binazir/*) label=${label#aryan-binazir/} ;;
 esac
 
+[[ -n $label ]] || return 1
+
 if (( ${#label} > 24 )); then
 REPLY="${label:0:23}…"
 else
@@ -52,48 +55,76 @@ fi
 }
 
 if [[ ${1:-} == --name ]]; then
-checkout_name "${2:-}" || exit 1
+dir=${2:-}
+if [[ $dir != /* ]]; then
+[[ -d $dir ]] || exit 1
+dir=$(cd -- "$dir" && pwd) || exit 1
+fi
+checkout_name "$dir" || exit 1
 printf '%s\n' "$REPLY"
 exit 0
 fi
 
+cleanup() {
+local owner=
+local snapshot=
+local window_id=
+local managed=
+
+owner=$(tmux show-option -gqv @window_checkout_names_pid 2>/dev/null) || return
+[[ $owner == $$ ]] || return
+
+snapshot=$(tmux list-windows -a -F $'#{window_id}\x1f#{@window_checkout_name_managed}' 2>/dev/null) || return
+while IFS=$'\x1f' read -r window_id managed; do
+[[ -n $window_id ]] || continue
+[[ $managed == 1 ]] || continue
+tmux set-window-option -u -t "$window_id" @window_checkout_name_managed \; set-window-option -u -t "$window_id" automatic-rename-format \; set-window-option -t "$window_id" automatic-rename on 2>/dev/null || true
+done <<< "$snapshot"
+tmux if-shell -F "#{==:#{@window_checkout_names_pid},$$}" 'set-option -gu @window_checkout_names_pid' 2>/dev/null || true
+}
+
+trap cleanup EXIT
+trap 'exit 0' INT TERM HUP
 tmux set-option -g @window_checkout_names_pid $$ || exit 1
 
-while :; do
-tmux has-session 2>/dev/null || exit 0
-[[ $(tmux show-option -gqv @window_checkout_names_pid) == $$ ]] || exit 0
+# Keep the write end open so the empty pipe blocks read until its timeout.
+exec {sleep_fd}<> <(:)
 
-while IFS=$'\x1f' read -r window_id active path command automatic managed current; do
-[[ $active == 1 ]] || continue
+fmt=$'#{@window_checkout_names_pid}\x1f#{window_id}\x1f#{pane_current_path}\x1f#{pane_current_command}\x1f#{automatic-rename}\x1f#{@window_checkout_name_managed}\x1f#{window_name}'
+
+while :; do
+snapshot=$(tmux list-windows -a -F "$fmt") || exit 0
+
+while IFS=$'\x1f' read -r owner window_id path command automatic managed current; do
+[[ -n $window_id ]] || continue
+[[ $owner == $$ ]] || exit 0
 
 if checkout_name "$path"; then
 if [[ $managed == 1 && $automatic == 0 && $current != "$REPLY" ]]; then
-tmux set-window-option -u -t "$window_id" @window_checkout_name_managed
-tmux set-window-option -u -t "$window_id" automatic-rename-format
+tmux set-window-option -u -t "$window_id" @window_checkout_name_managed \; set-window-option -u -t "$window_id" automatic-rename-format 2>/dev/null || true
 continue
 fi
 
 if [[ $managed == 1 || $automatic == 1 || $current == "$REPLY" ]]; then
+if [[ $managed != 1 || $automatic != 1 || $current != "$REPLY" ]]; then
+tmux_args=()
 if [[ $current != "$REPLY" ]]; then
-tmux rename-window -t "$window_id" "$REPLY"
+name=$REPLY
+[[ $name == *';' ]] && name=${name%';'}'\;'
+tmux_args+=(rename-window -t "$window_id" -- "$name" \;)
 fi
-if [[ $managed != 1 || $automatic == 0 || $current != "$REPLY" ]]; then
-tmux set-window-option -t "$window_id" automatic-rename-format '#{window_name}'
-fi
-if [[ $automatic == 0 || $current != "$REPLY" ]]; then
-tmux set-window-option -t "$window_id" automatic-rename on
-fi
-if [[ $managed != 1 ]]; then
-tmux set-window-option -t "$window_id" @window_checkout_name_managed 1
+tmux_args+=(set-window-option -t "$window_id" automatic-rename-format '#{window_name}' \;)
+tmux_args+=(set-window-option -t "$window_id" automatic-rename on \;)
+tmux_args+=(set-window-option -t "$window_id" @window_checkout_name_managed 1)
+tmux "${tmux_args[@]}" 2>/dev/null || true
 fi
 fi
 elif [[ $managed == 1 ]]; then
-tmux set-window-option -u -t "$window_id" @window_checkout_name_managed
-tmux set-window-option -u -t "$window_id" automatic-rename-format
-tmux rename-window -t "$window_id" "$command"
-tmux set-window-option -t "$window_id" automatic-rename on
+name=$command
+[[ $name == *';' ]] && name=${name%';'}'\;'
+tmux set-window-option -u -t "$window_id" @window_checkout_name_managed \; set-window-option -u -t "$window_id" automatic-rename-format \; rename-window -t "$window_id" -- "$name" \; set-window-option -t "$window_id" automatic-rename on 2>/dev/null || true
 fi
-done < <(tmux list-panes -a -F $'#{window_id}\x1f#{pane_active}\x1f#{pane_current_path}\x1f#{pane_current_command}\x1f#{automatic-rename}\x1f#{@window_checkout_name_managed}\x1f#{window_name}')
+done <<< "$snapshot"
 
-sleep 1
+read -rt 1 -u "$sleep_fd" _ || true
 done
