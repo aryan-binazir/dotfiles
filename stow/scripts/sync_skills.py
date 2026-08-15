@@ -62,9 +62,17 @@ def symlink_skills() -> None:
     except subprocess.CalledProcessError as error:
         raise RuntimeError("hunk skill path failed") from error
 
-    hunk_skill_file = Path(hunk_skill_result.stdout.strip()).expanduser()
-    if not hunk_skill_file.is_file() or hunk_skill_file.name != "SKILL.md":
-        raise RuntimeError(f"hunk returned invalid skill path: {hunk_skill_file}")
+    hunk_skill_files = []
+    for output_line in hunk_skill_result.stdout.splitlines():
+        candidate = Path(output_line.strip()).expanduser()
+        if candidate.is_file() and candidate.name == "SKILL.md":
+            hunk_skill_files.append(candidate)
+
+    if len(hunk_skill_files) != 1:
+        raise RuntimeError(
+            f"hunk returned invalid skill path: {hunk_skill_result.stdout.strip()}"
+        )
+    hunk_skill_file = hunk_skill_files[0]
 
     TARGET_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Syncing skills into {TARGET_DIR}")
