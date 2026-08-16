@@ -87,9 +87,6 @@ trap cleanup EXIT
 trap 'exit 0' INT TERM HUP
 tmux set-option -g @window_checkout_names_pid $$ || exit 1
 
-# Keep the write end open so the empty pipe blocks read until its timeout.
-exec {sleep_fd}<> <(:)
-
 fmt=$'#{@window_checkout_names_pid}\x1f#{window_id}\x1f#{pane_current_path}\x1f#{pane_current_command}\x1f#{automatic-rename}\x1f#{@window_checkout_name_managed}\x1f#{window_name}'
 
 while :; do
@@ -126,5 +123,5 @@ tmux set-window-option -u -t "$window_id" @window_checkout_name_managed \; set-w
 fi
 done <<< "$snapshot"
 
-read -rt 1 -u "$sleep_fd" _ || true
+sleep 1
 done
