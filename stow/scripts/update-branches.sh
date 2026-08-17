@@ -51,7 +51,6 @@ git_branch() {
 }
 
 declare -a tmux_cmd=()
-declare -A cache=()
 
 # \x1f delimiter: tab is IFS whitespace, so it would collapse the empty
 # #{@branch} field; a non-whitespace IFS char preserves empty fields.
@@ -60,12 +59,7 @@ while IFS=$'\x1f' read -r session_id current session_path; do
 
 	branch=
 	if [[ -n $session_path ]]; then
-		if [[ ${cache[$session_path]+set} ]]; then
-			branch=${cache[$session_path]}
-		else
-			git_branch "$session_path" && branch=$REPLY
-			cache[$session_path]=$branch
-		fi
+		git_branch "$session_path" && branch=$REPLY
 	fi
 
 	[[ $branch == "$current" ]] && continue
