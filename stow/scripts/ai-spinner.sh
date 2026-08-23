@@ -11,8 +11,9 @@
 #   Claude Code — sets its pane title to a braille char (U+2800–U+28FF) while
 #                 working, "✳ ..." while waiting for input.
 #   codex       — pane content shows "esc to interrupt" while working.
-#   pi          — pane content shows "Working" / "Working..." while working
-#                 (marker taken from the earlier tmux-agent-status attempt).
+#   cursor-agent — runs as `node`; prompt bar shows "ctrl+c to stop" while working.
+#   pi          — runs as `node`; pane content shows "Working" / "Working..."
+#                 while working.
 #
 # Animation (every 250ms): frame advances one position and clients are
 # refreshed with refresh-client -S, so rotation stays quick without needing
@@ -69,10 +70,10 @@ scan_panes() {
         "$b0"* | "$b1"* | "$b2"* | "$b3"*) w=1 ;;
         *)
             case $cmd in
-            codex*) tmux capture-pane -p -t "$pane" 2>/dev/null |
-                tail -8 | grep -qi 'esc to interrupt' && w=1 ;;
-            uv | pi) tmux capture-pane -p -t "$pane" 2>/dev/null |
-                tail -8 | grep -qE '(^|[[:space:]])Working(\.\.\.)?([[:space:]]|$)' && w=1 ;;
+            codex* | node | bun | uv | pi | cursor-agent)
+                tmux capture-pane -p -t "$pane" 2>/dev/null |
+                    grep -v '^[[:space:]]*$' | tail -8 |
+                    grep -qE '[Ee]sc to interrupt|[Cc]trl\+[Cc] to stop|(^|[[:space:]])Working(\.\.\.)?([[:space:]]|$)' && w=1 ;;
             esac
             ;;
         esac
