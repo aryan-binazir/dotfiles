@@ -121,6 +121,10 @@ def main() -> int:
     if status != 0:
         return status
 
+    status = run(["git", "worktree", "prune"], cwd=root)
+    if status != 0:
+        return status
+
     worktree = root / "_scratch" / "worktrees" / name
     branch_ref = f"refs/heads/{branch}"
     branch_exists = git(["show-ref", "--verify", "--quiet", branch_ref], cwd=root)

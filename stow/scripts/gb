@@ -91,14 +91,128 @@ def in_progress_operation(root: Path) -> str | None:
     return None
 
 
+def gone_branches(root: Path) -> list[str]:
+    result = git(
+        "for-each-ref",
+        "refs/heads",
+        "--format=%(refname:short)\t%(upstream:track)",
+        root=root,
+        capture=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("cannot inspect local branch upstreams")
+
+    branches = []
+    for line in result.stdout.splitlines():
+        branch, _, tracking = line.partition("\t")
+        if tracking == "[gone]":
+            branches.append(branch)
+    return branches
+
+
+def branch_worktrees(root: Path) -> dict[str, tuple[Path, bool]]:
+    result = git("worktree", "list", "--porcelain", root=root, capture=True)
+    if result.returncode != 0:
+        raise RuntimeError("cannot inspect Git worktrees")
+
+    worktrees = {}
+    for index, record in enumerate(result.stdout.rstrip("\n").split("\n\n")):
+        path: Path | None = None
+        branch: str | None = None
+        for line in record.splitlines():
+            if line.startswith("worktree "):
+                path = Path(line.removeprefix("worktree "))
+            elif line.startswith("branch refs/heads/"):
+                branch = line.removeprefix("branch refs/heads/")
+        if path is not None and branch is not None:
+            worktrees[branch] = (path, index != 0)
+    return worktrees
+
+
+def prune_gone_branch(
+    root: Path,
+    branch: str,
+    worktree: tuple[Path, bool] | None,
+) -> None:
+    if worktree is not None:
+        path, is_linked = worktree
+        if not is_linked:
+            print(
+                f"gb: skipped local branch {branch} "
+                f"(primary worktree: {path})",
+                file=sys.stderr,
+            )
+            return
+
+        operation = in_progress_operation(path)
+        if operation:
+            print(
+                f"gb: skipped local branch {branch} "
+                f"({operation} in progress: {path})",
+                file=sys.stderr,
+            )
+            return
+
+        status = git("status", "--porcelain", root=path, capture=True)
+        if status.returncode != 0:
+            raise RuntimeError(
+                f"git status failed with exit status {status.returncode}"
+            )
+        if status.stdout:
+            print(
+                f"gb: skipped local branch {branch} "
+                f"(dirty worktree: {path})",
+                file=sys.stderr,
+            )
+            return
+
+        result = git("worktree", "remove", str(path), root=root, capture=True)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"git worktree remove failed with exit status {result.returncode}"
+            )
+
+    result = git("branch", "-D", "--", branch, root=root, capture=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"git branch -D failed with exit status {result.returncode}"
+        )
+    print(
+        f"gb: pruned local branch {branch} (upstream gone)",
+        file=sys.stderr,
+    )
+
+
+def prune_gone_branches(root: Path, current_branch: str) -> None:
+    try:
+        branches = gone_branches(root)
+        worktrees = branch_worktrees(root)
+    except Exception as error:
+        print(f"gb: warning: local branch pruning failed: {error}", file=sys.stderr)
+        return
+
+    for branch in branches:
+        if branch in ("main", current_branch):
+            continue
+        try:
+            prune_gone_branch(root, branch, worktrees.get(branch))
+        except Exception as error:
+            print(
+                f"gb: warning: failed to prune local branch {branch}: {error}",
+                file=sys.stderr,
+            )
+
+
 def main() -> int:
     root = git_root()
     if root is None:
         return 1
 
-    if git("symbolic-ref", "-q", "HEAD", root=root, capture=True).returncode:
+    head = git("symbolic-ref", "-q", "--short", "HEAD", root=root, capture=True)
+    if head.returncode:
         print("error: refusing to leave a detached Git HEAD", file=sys.stderr)
         return 1
+    current_branch = head.stdout.removesuffix("\n")
 
     operation = in_progress_operation(root)
     if operation:
@@ -108,6 +222,8 @@ def main() -> int:
     result = git("fetch", "--prune", "origin", root=root)
     if result.returncode != 0:
         return result.returncode
+
+    prune_gone_branches(root, current_branch)
 
     branch, cmd = parse_args(sys.argv[1:], root)
 
