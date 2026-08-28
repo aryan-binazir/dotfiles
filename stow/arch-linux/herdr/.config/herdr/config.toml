@@ -58,7 +58,7 @@ resize_pane_right = "ctrl+alt+shift+right"
 rename_pane = "prefix+shift+o"
 
 # Agents
-focus_agent = "prefix+alt+1..9"
+focus_agent = "prefix+shift+1..9"
 
 # Windows -> tabs
 new_tab = "prefix+c"
