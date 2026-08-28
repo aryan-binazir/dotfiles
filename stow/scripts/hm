@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${HERDR_ENV:-} != 1 ]]; then
+    echo "error: hm must run inside Herdr" >&2
+    exit 1
+fi
+
+if (( $# > 1 )); then
+    echo "usage: hm [directory]" >&2
+    exit 2
+fi
+
+if (( $# == 1 )); then
+    selected=$1
+else
+    selected=$(fzf < <(find ~ ~/repos -mindepth 1 -maxdepth 5 -type d 2>/dev/null)) || exit 0
+fi
+
+if [[ -z $selected ]]; then
+    exit 0
+fi
+
+if [[ ! -d $selected ]]; then
+    echo "error: not a directory: $selected" >&2
+    exit 1
+fi
+
+selected=$(realpath -- "$selected")
+selected_name=$(basename "$selected" | tr . _)
+workspace_id=$(
+    herdr workspace list |
+        jq -r --arg label "$selected_name" '
+            first(
+                .result.workspaces[]
+                | select(.label == $label)
+                | .workspace_id
+            ) // empty
+        '
+)
+
+if [[ -n $workspace_id ]]; then
+    herdr workspace focus "$workspace_id" >/dev/null
+else
+    herdr workspace create \
+        --cwd "$selected" \
+        --label "$selected_name" \
+        --focus >/dev/null
+fi
