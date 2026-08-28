@@ -103,8 +103,13 @@ def main() -> int:
     if len(sys.argv) != 2:
         die("usage: gw <name>")
 
-    name = sys.argv[1].removeprefix("aryan-binazir/")
-    branch = f"aryan-binazir/{name}"
+    requested = sys.argv[1]
+    if requested.startswith(("amb/", "aryan-binazir/")):
+        branch = requested
+        name = requested.split("/", 1)[1]
+    else:
+        name = requested
+        branch = f"amb/{name}"
     if (
         not name
         or name.startswith("-")

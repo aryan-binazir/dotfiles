@@ -60,8 +60,14 @@ def existing_branch(root: Path, name: str) -> bool:
 
 
 def parse_args(args: list[str], root: Path) -> tuple[str, list[str]]:
-    if args and existing_branch(root, args[0]):
-        return args[0], args[1:]
+    if args:
+        requested = args[0]
+        candidates = (
+            (f"amb/{requested}", requested) if "/" not in requested else (requested,)
+        )
+        for branch in candidates:
+            if existing_branch(root, branch):
+                return branch, args[1:]
     return "main", args
 
 
