@@ -10,12 +10,18 @@ from pathlib import Path
 
 
 SKILLS_REPO = Path("~/repos/skills").expanduser()
+CURSOR_PLUGINS_REPO = Path("~/repos/cursor-plugins").expanduser()
+CURSOR_PLUGINS_URL = "https://github.com/cursor/plugins.git"
+UNSLOP_PATH = Path("pstack/skills/unslop")
 TARGET_DIR = Path("~/repos/cc-config/skills/sym_linked").expanduser()
 CC_CONFIG_SKILLS_DIR = Path("~/repos/cc-config/skills").expanduser()
 AGENTS_SOURCE = Path("~/repos/cc-config/AGENTS.md").expanduser()
 SOURCE_DIRS = [
     SKILLS_REPO / "skills" / "engineering",
     SKILLS_REPO / "skills" / "productivity",
+]
+SOURCE_SKILLS = [
+    CURSOR_PLUGINS_REPO / UNSLOP_PATH,
 ]
 APP_SKILL_DIRS = [
     ("codex", Path("~/.codex").expanduser(), Path("~/.codex/skills").expanduser()),
@@ -36,19 +42,56 @@ def require_dir(path: Path, label: str) -> None:
         raise RuntimeError(f"{label} is not a directory: {path}")
 
 
-def pull_skills() -> None:
-    require_dir(SKILLS_REPO, "skills repo")
+def clone_cursor_plugins() -> None:
+    if CURSOR_PLUGINS_REPO.exists():
+        require_dir(CURSOR_PLUGINS_REPO, "Cursor plugins repo")
+        return
 
-    print(f"Pulling {SKILLS_REPO}")
+    print(f"Cloning {CURSOR_PLUGINS_URL} into {CURSOR_PLUGINS_REPO}")
     try:
-        subprocess.run(["git", "-C", str(SKILLS_REPO), "pull", "--ff-only"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "--filter=blob:none",
+                "--sparse",
+                CURSOR_PLUGINS_URL,
+                str(CURSOR_PLUGINS_REPO),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(CURSOR_PLUGINS_REPO),
+                "sparse-checkout",
+                "set",
+                str(UNSLOP_PATH),
+            ],
+            check=True,
+        )
     except subprocess.CalledProcessError as error:
-        raise RuntimeError(f"git pull failed in {SKILLS_REPO}") from error
+        raise RuntimeError(f"git clone failed for {CURSOR_PLUGINS_URL}") from error
+
+
+def pull_skills() -> None:
+    require_dir(SKILLS_REPO, "Matt Pocock skills repo")
+    clone_cursor_plugins()
+
+    for repo in [SKILLS_REPO, CURSOR_PLUGINS_REPO]:
+        print(f"Pulling {repo}")
+        try:
+            subprocess.run(["git", "-C", str(repo), "pull", "--ff-only"], check=True)
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(f"git pull failed in {repo}") from error
 
 
 def symlink_skills() -> None:
     for source_dir in SOURCE_DIRS:
         require_dir(source_dir, "source skills directory")
+    for source_skill in SOURCE_SKILLS:
+        require_dir(source_skill, "source skill directory")
 
     try:
         hunk_skill_result = subprocess.run(
@@ -87,6 +130,7 @@ def symlink_skills() -> None:
             if source_path.is_dir():
                 source_paths.append(source_path)
 
+    source_paths.extend(SOURCE_SKILLS)
     source_paths.append(hunk_skill_file.parent)
 
     for source_path in source_paths:
