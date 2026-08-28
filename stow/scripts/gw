@@ -125,7 +125,8 @@ def main() -> int:
     if status != 0:
         return status
 
-    worktree = root / "_scratch" / "worktrees" / name
+    worktree = Path.home() / "repos" / ".worktrees" / root.name / name
+    worktree.parent.mkdir(parents=True, exist_ok=True)
     branch_ref = f"refs/heads/{branch}"
     branch_exists = git(["show-ref", "--verify", "--quiet", branch_ref], cwd=root)
     if branch_exists.returncode not in (0, 1):
