@@ -101,7 +101,7 @@ def gone_branches(root: Path) -> list[str]:
     result = git(
         "for-each-ref",
         "refs/heads",
-        "--format=%(refname:short)\t%(upstream:track)",
+        "--format=%(refname)\t%(upstream:track)",
         root=root,
         capture=True,
     )
@@ -110,9 +110,9 @@ def gone_branches(root: Path) -> list[str]:
 
     branches = []
     for line in result.stdout.splitlines():
-        branch, _, tracking = line.partition("\t")
+        ref, _, tracking = line.partition("\t")
         if tracking == "[gone]":
-            branches.append(branch)
+            branches.append(ref.removeprefix("refs/heads/"))
     return branches
 
 
@@ -135,11 +135,37 @@ def branch_worktrees(root: Path) -> dict[str, tuple[Path, bool]]:
     return worktrees
 
 
+def merged_into_main(root: Path, branch: str) -> bool:
+    result = git(
+        "merge-base",
+        "--is-ancestor",
+        f"refs/heads/{branch}",
+        "refs/remotes/origin/main",
+        root=root,
+        capture=True,
+    )
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    raise RuntimeError(
+        f"git merge-base failed with exit status {result.returncode}"
+    )
+
+
 def prune_gone_branch(
     root: Path,
     branch: str,
     worktree: tuple[Path, bool] | None,
 ) -> None:
+    if not merged_into_main(root, branch):
+        print(
+            f"gb: skipped local branch {branch} "
+            "(unmerged commits; upstream gone)",
+            file=sys.stderr,
+        )
+        return
+
     if worktree is not None:
         path, is_linked = worktree
         if not is_linked:
@@ -150,33 +176,48 @@ def prune_gone_branch(
             )
             return
 
-        operation = in_progress_operation(path)
-        if operation:
-            print(
-                f"gb: skipped local branch {branch} "
-                f"({operation} in progress: {path})",
-                file=sys.stderr,
-            )
-            return
+        if path.is_dir():
+            operation = in_progress_operation(path)
+            if operation:
+                print(
+                    f"gb: skipped local branch {branch} "
+                    f"({operation} in progress: {path})",
+                    file=sys.stderr,
+                )
+                return
 
-        status = git("status", "--porcelain", root=path, capture=True)
-        if status.returncode != 0:
-            raise RuntimeError(
-                f"git status failed with exit status {status.returncode}"
-            )
-        if status.stdout:
-            print(
-                f"gb: skipped local branch {branch} "
-                f"(dirty worktree: {path})",
-                file=sys.stderr,
-            )
-            return
+            status = git("status", "--porcelain", root=path, capture=True)
+            if status.returncode != 0:
+                raise RuntimeError(
+                    f"git status failed with exit status {status.returncode}"
+                )
+            if status.stdout:
+                print(
+                    f"gb: skipped local branch {branch} "
+                    f"(dirty worktree: {path})",
+                    file=sys.stderr,
+                )
+                return
 
-        result = git("worktree", "remove", str(path), root=root, capture=True)
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"git worktree remove failed with exit status {result.returncode}"
-            )
+            result = git("worktree", "remove", str(path), root=root, capture=True)
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"git worktree remove failed with exit status {result.returncode}"
+                )
+        else:
+            result = git("worktree", "prune", root=root, capture=True)
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"git worktree prune failed with exit status {result.returncode}"
+                )
+            if branch in branch_worktrees(root):
+                print(
+                    f"gb: skipped local branch {branch} "
+                    f"(missing registered worktree: {path}; "
+                    "unlock it if needed, then run git worktree prune)",
+                    file=sys.stderr,
+                )
+                return
 
     result = git("branch", "-D", "--", branch, root=root, capture=True)
     if result.returncode != 0:
@@ -191,6 +232,20 @@ def prune_gone_branch(
 
 def prune_gone_branches(root: Path, current_branch: str) -> None:
     try:
+        result = git(
+            "show-ref",
+            "--verify",
+            "--quiet",
+            "refs/remotes/origin/main",
+            root=root,
+            capture=True,
+        )
+        if result.returncode == 1:
+            raise RuntimeError("origin/main is unavailable")
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"cannot inspect origin/main (exit status {result.returncode})"
+            )
         branches = gone_branches(root)
         worktrees = branch_worktrees(root)
     except Exception as error:
