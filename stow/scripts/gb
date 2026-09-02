@@ -264,6 +264,67 @@ def prune_gone_branches(root: Path, current_branch: str) -> None:
             )
 
 
+def prepare_branch_switch(root: Path, branch: str) -> bool:
+    worktree = branch_worktrees(root).get(branch)
+    if worktree is None:
+        return True
+
+    path, is_linked = worktree
+    if path.resolve() == root.resolve():
+        return True
+    if not is_linked:
+        print(
+            f"error: branch {branch} is checked out in the primary worktree: {path}",
+            file=sys.stderr,
+        )
+        return False
+
+    if not path.is_dir():
+        result = git("worktree", "prune", root=root, capture=True)
+        if result.returncode != 0:
+            print("error: git worktree prune failed", file=sys.stderr)
+            return False
+        if branch in branch_worktrees(root):
+            print(
+                f"error: branch {branch} has a missing locked worktree: {path}",
+                file=sys.stderr,
+            )
+            return False
+        return True
+
+    operation = in_progress_operation(path)
+    if operation:
+        print(
+            f"error: branch {branch} worktree has {operation} in progress: {path}",
+            file=sys.stderr,
+        )
+        return False
+
+    status = git("status", "--porcelain", "--ignored", root=path, capture=True)
+    if status.returncode != 0:
+        print(
+            f"error: cannot inspect worktree for branch {branch}: {path}",
+            file=sys.stderr,
+        )
+        return False
+    if status.stdout:
+        print(
+            f"error: branch {branch} worktree has local files: {path}",
+            file=sys.stderr,
+        )
+        return False
+
+    result = git("worktree", "remove", str(path), root=root, capture=True)
+    if result.returncode != 0:
+        print(
+            f"error: cannot remove worktree for branch {branch}: {path}",
+            file=sys.stderr,
+        )
+        return False
+    print(f"gb: removed clean worktree for {branch}: {path}", file=sys.stderr)
+    return True
+
+
 def main() -> int:
     root = git_root()
     if root is None:
@@ -294,6 +355,9 @@ def main() -> int:
 
     if git("check-ref-format", "--branch", branch, root=root, capture=True).returncode:
         print(f"error: invalid branch name: {branch}", file=sys.stderr)
+        return 1
+
+    if not prepare_branch_switch(root, branch):
         return 1
 
     status = git("status", "--porcelain", root=root, capture=True)

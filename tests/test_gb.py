@@ -11,7 +11,11 @@ from unittest import mock
 GB = Path(__file__).parents[1] / "stow/scripts/gb"
 
 
-def run(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+def run(
+    *args: str,
+    cwd: Path,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
         env.pop(name, None)
@@ -22,11 +26,95 @@ def run(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        check=True,
+        check=check,
     )
 
 
 class GbTest(unittest.TestCase):
+    def test_removes_clean_worktree_using_target_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            remote = root / "remote.git"
+            repo = root / "repo"
+            main_worktree = root / "main-worktree"
+
+            run(
+                "git",
+                "init",
+                "--bare",
+                "--initial-branch=main",
+                str(remote),
+                cwd=root,
+            )
+            run("git", "clone", str(remote), str(repo), cwd=root)
+            run("git", "config", "user.name", "GB Test", cwd=repo)
+            run("git", "config", "user.email", "gb@example.test", cwd=repo)
+            run("git", "commit", "--allow-empty", "-m", "initial", cwd=repo)
+            run("git", "push", "-u", "origin", "main", cwd=repo)
+            run("git", "switch", "-c", "feature", cwd=repo)
+            run("git", "worktree", "add", str(main_worktree), "main", cwd=repo)
+
+            result = run(sys.executable, str(GB), "main", cwd=repo)
+
+            self.assertEqual(
+                run("git", "branch", "--show-current", cwd=repo).stdout.strip(),
+                "main",
+            )
+            self.assertFalse(main_worktree.exists())
+            self.assertNotIn(
+                str(main_worktree),
+                run("git", "worktree", "list", "--porcelain", cwd=repo).stdout,
+            )
+            self.assertIn(
+                f"gb: removed clean worktree for main: {main_worktree}",
+                result.stderr,
+            )
+
+    def test_preserves_worktree_with_ignored_file_using_target_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            remote = root / "remote.git"
+            repo = root / "repo"
+            main_worktree = root / "main-worktree"
+
+            run(
+                "git",
+                "init",
+                "--bare",
+                "--initial-branch=main",
+                str(remote),
+                cwd=root,
+            )
+            run("git", "clone", str(remote), str(repo), cwd=root)
+            run("git", "config", "user.name", "GB Test", cwd=repo)
+            run("git", "config", "user.email", "gb@example.test", cwd=repo)
+            (repo / ".gitignore").write_text("dirty.txt\n")
+            run("git", "add", ".gitignore", cwd=repo)
+            run("git", "commit", "-m", "initial", cwd=repo)
+            run("git", "push", "-u", "origin", "main", cwd=repo)
+            run("git", "switch", "-c", "feature", cwd=repo)
+            run("git", "worktree", "add", str(main_worktree), "main", cwd=repo)
+            (main_worktree / "dirty.txt").write_text("keep me\n")
+
+            result = run(
+                sys.executable,
+                str(GB),
+                "main",
+                cwd=repo,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(
+                run("git", "branch", "--show-current", cwd=repo).stdout.strip(),
+                "feature",
+            )
+            self.assertTrue((main_worktree / "dirty.txt").exists())
+            self.assertIn(
+                f"error: branch main worktree has local files: {main_worktree}",
+                result.stderr,
+            )
+
     def test_prunes_only_local_merged_branches(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
