@@ -29,6 +29,11 @@ settings = "prefix+shift+s"
 detach = "prefix+d"
 workspace_picker = "prefix+s"
 
+# Worktrees
+open_worktree = "prefix+shift+t"
+# Herdr confirms before removing the checkout
+remove_worktree = "prefix+shift+d"
+
 # Copy mode
 copy_mode = "prefix+["
 
