@@ -37,7 +37,9 @@ split_horizontal = ["prefix+percent", "alt+enter"]
 split_vertical = ['prefix+"', "alt+shift+enter"]
 close_pane = ["prefix+x", "alt+esc"]
 zoom = "prefix+z"
-last_pane = "prefix+;"
+# Capital L returns to the last focused pane across spaces and tabs
+last_pane = "prefix+shift+l"
+swap_pane_right = ""
 
 focus_pane_left = ["prefix+h", "ctrl+alt+left"]
 focus_pane_down = ["prefix+j", "ctrl+alt+down"]
@@ -97,8 +99,8 @@ pane_outer_borders = false
 # tmux had no scrollbar column beside its panes
 pane_scrollbars = false
 
-# kill-window and kill-session never asked
-confirm_close = false
+# Confirm before closing a workspace
+confirm_close = true
 
 # automatic-rename gave windows a name without prompting
 prompt_new_tab_name = false
