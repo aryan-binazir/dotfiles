@@ -13,6 +13,9 @@ SKILLS_REPO = Path("~/repos/skills").expanduser()
 CURSOR_PLUGINS_REPO = Path("~/repos/cursor-plugins").expanduser()
 CURSOR_PLUGINS_URL = "https://github.com/cursor/plugins.git"
 UNSLOP_PATH = Path("pstack/skills/unslop")
+HUMANLAYER_SKILLS_REPO = Path("~/repos/humanlayer-skills").expanduser()
+HUMANLAYER_SKILLS_URL = "https://github.com/humanlayer/skills.git"
+SHOW_ME_PATH = Path("plugins/show-me/skills/show-me")
 TARGET_DIR = Path("~/repos/cc-config/skills/sym_linked").expanduser()
 CC_CONFIG_SKILLS_DIR = Path("~/repos/cc-config/skills").expanduser()
 AGENTS_SOURCE = Path("~/repos/cc-config/AGENTS.md").expanduser()
@@ -22,6 +25,7 @@ SOURCE_DIRS = [
 ]
 SOURCE_SKILLS = [
     CURSOR_PLUGINS_REPO / UNSLOP_PATH,
+    HUMANLAYER_SKILLS_REPO / SHOW_ME_PATH,
 ]
 APP_SKILL_DIRS = [
     ("codex", Path("~/.codex").expanduser(), Path("~/.codex/skills").expanduser()),
@@ -42,12 +46,12 @@ def require_dir(path: Path, label: str) -> None:
         raise RuntimeError(f"{label} is not a directory: {path}")
 
 
-def clone_cursor_plugins() -> None:
-    if CURSOR_PLUGINS_REPO.exists():
-        require_dir(CURSOR_PLUGINS_REPO, "Cursor plugins repo")
+def clone_sparse_repo(repo: Path, label: str, url: str, sparse_path: Path) -> None:
+    if repo.exists():
+        require_dir(repo, label)
         return
 
-    print(f"Cloning {CURSOR_PLUGINS_URL} into {CURSOR_PLUGINS_REPO}")
+    print(f"Cloning {url} into {repo}")
     try:
         subprocess.run(
             [
@@ -55,8 +59,8 @@ def clone_cursor_plugins() -> None:
                 "clone",
                 "--filter=blob:none",
                 "--sparse",
-                CURSOR_PLUGINS_URL,
-                str(CURSOR_PLUGINS_REPO),
+                url,
+                str(repo),
             ],
             check=True,
         )
@@ -64,22 +68,33 @@ def clone_cursor_plugins() -> None:
             [
                 "git",
                 "-C",
-                str(CURSOR_PLUGINS_REPO),
+                str(repo),
                 "sparse-checkout",
                 "set",
-                str(UNSLOP_PATH),
+                str(sparse_path),
             ],
             check=True,
         )
     except subprocess.CalledProcessError as error:
-        raise RuntimeError(f"git clone failed for {CURSOR_PLUGINS_URL}") from error
+        raise RuntimeError(f"git clone failed for {url}") from error
 
 
 def pull_skills() -> None:
     require_dir(SKILLS_REPO, "Matt Pocock skills repo")
-    clone_cursor_plugins()
+    clone_sparse_repo(
+        CURSOR_PLUGINS_REPO,
+        "Cursor plugins repo",
+        CURSOR_PLUGINS_URL,
+        UNSLOP_PATH,
+    )
+    clone_sparse_repo(
+        HUMANLAYER_SKILLS_REPO,
+        "Humanlayer skills repo",
+        HUMANLAYER_SKILLS_URL,
+        SHOW_ME_PATH,
+    )
 
-    for repo in [SKILLS_REPO, CURSOR_PLUGINS_REPO]:
+    for repo in [SKILLS_REPO, CURSOR_PLUGINS_REPO, HUMANLAYER_SKILLS_REPO]:
         print(f"Pulling {repo}")
         try:
             subprocess.run(["git", "-C", str(repo), "pull", "--ff-only"], check=True)
