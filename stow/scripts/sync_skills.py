@@ -28,6 +28,7 @@ SOURCE_SKILLS = [
     HUMANLAYER_SKILLS_REPO / SHOW_ME_PATH,
 ]
 APP_SKILL_DIRS = [
+    ("pi", Path("~/.pi/agent").expanduser(), Path("~/.pi/agent/skills").expanduser()),
     ("codex", Path("~/.codex").expanduser(), Path("~/.codex/skills").expanduser()),
     ("claude", Path("~/.claude").expanduser(), Path("~/.claude/skills").expanduser()),
     ("cursor", Path("~/.cursor").expanduser(), Path("~/.cursor/skills").expanduser()),
@@ -309,6 +310,10 @@ def remove_stale_top_level_links(app_skills_dir: Path, desired_names: set[str]) 
         if not target_path.is_symlink():
             continue
         if target_path.name in desired_names:
+            continue
+
+        # Preserve skills installed independently (e.g. Omarchy's Pi skills).
+        if not target_path.readlink().is_relative_to(CC_CONFIG_SKILLS_DIR):
             continue
 
         print(f"Removing stale skill link {target_path}: {target_path.readlink()}")
