@@ -45,6 +45,7 @@ alias acdl='acd --model gpt-5.6-luna -c model_reasoning_effort=xhigh'
 alias acu='cursor-agent --auto-review --sandbox enabled'
 alias hu='hunk diff origin/main...HEAD'
 alias h='herdr'
+alias pie='pi update --all && pi'
 
 # Keep this wrapper in sync with the copyable version in stow/scripts/gw.
 gw() {
