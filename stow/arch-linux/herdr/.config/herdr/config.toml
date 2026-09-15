@@ -54,7 +54,8 @@ focus_pane_right = ["prefix+l", "ctrl+alt+right"]
 navigate_workspace_up = ["up", "k"]
 navigate_workspace_down = ["down", "j"]
 
-resize_mode = ["prefix+ctrl+left", "prefix+ctrl+down", "prefix+ctrl+up", "prefix+ctrl+right"]
+# Prefix+r enters resize mode; use arrows repeatedly, then Esc or Enter to finish.
+resize_mode = ["prefix+r", "prefix+ctrl+left", "prefix+ctrl+down", "prefix+ctrl+up", "prefix+ctrl+right"]
 
 # Like tmux prefix+arrows and C-M-S-arrows
 resize_pane_left = ["prefix+left", "ctrl+alt+shift+left"]
