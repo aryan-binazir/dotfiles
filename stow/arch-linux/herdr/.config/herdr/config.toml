@@ -56,11 +56,11 @@ navigate_workspace_down = ["down", "j"]
 
 resize_mode = ["prefix+ctrl+left", "prefix+ctrl+down", "prefix+ctrl+up", "prefix+ctrl+right"]
 
-# Like resize-pane on C-M-S-arrows
-resize_pane_left = "ctrl+alt+shift+left"
-resize_pane_down = "ctrl+alt+shift+down"
-resize_pane_up = "ctrl+alt+shift+up"
-resize_pane_right = "ctrl+alt+shift+right"
+# Like tmux prefix+arrows and C-M-S-arrows
+resize_pane_left = ["prefix+left", "ctrl+alt+shift+left"]
+resize_pane_down = ["prefix+down", "ctrl+alt+shift+down"]
+resize_pane_up = ["prefix+up", "ctrl+alt+shift+up"]
+resize_pane_right = ["prefix+right", "ctrl+alt+shift+right"]
 
 # No tmux equivalent; herdr's default prefix+shift+p is taken by previous session
 rename_pane = "prefix+shift+o"
