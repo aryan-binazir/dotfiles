@@ -42,8 +42,9 @@ split_horizontal = ["prefix+percent", "alt+enter"]
 split_vertical = ['prefix+"', "alt+shift+enter"]
 close_pane = ["prefix+x", "alt+esc"]
 zoom = "prefix+z"
-# Capital L returns to the last focused pane across spaces and tabs
-last_pane = "prefix+shift+l"
+# Capital L returns to the last focused space, bound below via the
+# plugins/last-workspace plugin (built-in last_pane also crosses tabs)
+last_pane = ""
 # tmux prefix+; / prefix+o: move to the next pane in the current tab
 cycle_pane_next = ["prefix+;", "prefix+o", "prefix+tab"]
 swap_pane_right = ""
@@ -89,6 +90,14 @@ rename_workspace = 'prefix+$'
 close_workspace = "prefix+shift+k"
 previous_workspace = ["prefix+shift+p", "alt+up"]
 next_workspace = ["prefix+shift+n", "alt+down"]
+
+# One-time setup on a new machine (the link registry lives outside dotfiles):
+#   herdr plugin link ~/.config/herdr/plugins/last-workspace
+[[keys.command]]
+key = "prefix+shift+l"
+type = "plugin_action"
+command = "ar.last-workspace.toggle"
+description = "go to last space"
 
 [[keys.command]]
 key = "prefix+f"
