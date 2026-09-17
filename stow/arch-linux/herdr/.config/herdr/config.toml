@@ -44,6 +44,8 @@ close_pane = ["prefix+x", "alt+esc"]
 zoom = "prefix+z"
 # Capital L returns to the last focused pane across spaces and tabs
 last_pane = "prefix+shift+l"
+# tmux prefix+; / prefix+o: move to the next pane in the current tab
+cycle_pane_next = ["prefix+;", "prefix+o", "prefix+tab"]
 swap_pane_right = ""
 
 focus_pane_left = ["prefix+h", "ctrl+alt+left"]
