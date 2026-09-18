@@ -80,3 +80,4 @@ export PATH="$GOPATH/bin:$PATH"
 export PATH="$HOME/.local/bin:$PATH"
 
 alias box='ssh ar@box.local'
+. "$HOME/.cargo/env"
