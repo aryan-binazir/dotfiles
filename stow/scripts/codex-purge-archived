@@ -1,0 +1,1004 @@
+#!/usr/bin/env python3
+"""Permanently delete archived Codex sessions.
+
+Removes archived transcripts from <codex_home>/archived_sessions/ together with
+their rows in state_5.sqlite and thread_history_1.sqlite and their lines in
+history.jsonl and session_index.jsonl. Archived thread rows whose transcript is
+already missing are removed too, as are transcript files in archived_sessions/
+that no thread row references. Unarchived threads and unrelated data are left
+alone.
+
+Safety model
+- Fails closed. Both databases must exist and match the pinned migration list
+  and the exact schema constants below (tables, columns, constraints, indexes,
+  triggers). Any mismatch aborts before anything is deleted. The constants are
+  never updated automatically; re-pin them deliberately after inspecting a new
+  Codex version.
+- Every candidate is validated first. Rows whose rollout_path is not a rollout
+  file directly inside archived_sessions/ named after the thread id, symlinks,
+  and files that belong to unarchived threads are skipped and reported.
+- Locks first, deletes second. flock() on both jsonl files and BEGIN IMMEDIATE
+  on both databases are acquired up front. If any lock cannot be acquired
+  within --lock-timeout the script exits without changing anything. Threads
+  whose thread-writer-locks/<id>.lock is currently held are skipped.
+- Write order: database deletes (uncommitted) -> jsonl rewrite under flock ->
+  commit thread_history_1 -> commit state_5 -> unlink transcript files. A crash
+  at any point leaves a state that the next run reclaims (rows without files
+  and files without rows are both candidates).
+
+Known limitations
+- The two databases cannot share one transaction, so a crash between the two
+  commits leaves thread_history rows deleted while the state row still exists.
+  The next run removes the state row.
+- jsonl files are rewritten in place (truncate + write) while holding flock so
+  that a Codex process which opened the file before the rewrite still appends
+  to the live inode. A crash inside that window can leave the file truncated.
+  A Codex build that appends without taking flock could lose an append that
+  lands inside the same window.
+- Disk space inside the sqlite files is returned to the freelist, not to the
+  filesystem; no VACUUM is run.
+- Codex Desktop keeps its own sidebar catalog (sqlite/codex-dev.db and
+  .codex-global-state.json). Those are not touched; the sidebar may keep
+  showing deleted threads until the app rescans.
+"""
+
+from __future__ import annotations
+
+import argparse
+import difflib
+import fcntl
+import json
+import os
+import re
+import sqlite3
+import stat
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+STATE_DB = "state_5.sqlite"
+HISTORY_DB = "thread_history_1.sqlite"
+ARCHIVE_DIR = "archived_sessions"
+WRITER_LOCK_DIR = "thread-writer-locks"
+HISTORY_JSONL = "history.jsonl"
+SESSION_INDEX_JSONL = "session_index.jsonl"
+
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_SCHEMA = 2
+EXIT_LOCKED = 3
+
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+ROLLOUT_RE = re.compile(
+    rf"^rollout-\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}-\d{{2}}-\d{{2}}-({UUID})\.jsonl(\.zst)?$"
+)
+
+# Pinned against codex-cli 0.155.1 on 2026-09-21. Regenerate deliberately with
+# `codex-purge-archived --print-schema` after verifying a new Codex version.
+EXPECTED_MIGRATIONS: dict[str, list[tuple[int, str]]] = {
+    STATE_DB: [
+        (1, 'threads'),
+        (2, 'logs'),
+        (3, 'logs thread id'),
+        (4, 'thread dynamic tools'),
+        (5, 'threads cli version'),
+        (6, 'memories'),
+        (7, 'threads first user message'),
+        (8, 'backfill state'),
+        (9, 'stage1 outputs rollout slug'),
+        (10, 'logs process id'),
+        (11, 'logs partition prune indexes'),
+        (12, 'logs estimated bytes'),
+        (13, 'threads agent nickname'),
+        (14, 'agent jobs'),
+        (15, 'agent jobs max runtime seconds'),
+        (16, 'memory usage'),
+        (17, 'phase2 selection flag'),
+        (18, 'phase2 selection snapshot'),
+        (19, 'thread dynamic tools defer loading'),
+        (20, 'threads model reasoning effort'),
+        (21, 'thread spawn edges'),
+        (22, 'threads agent path'),
+        (23, 'drop logs'),
+        (24, 'remote control enrollments'),
+        (25, 'thread timestamps millis'),
+        (26, 'thread dynamic tools namespace'),
+        (27, 'threads cwd sort indexes'),
+        (28, 'device key bindings'),
+        (29, 'thread goals'),
+        (30, 'threads thread source'),
+        (31, 'drop device key bindings'),
+        (32, 'threads preview'),
+        (33, 'thread goal stopped statuses'),
+        (34, 'drop thread goals'),
+        (35, 'drop memory tables'),
+        (36, 'threads visible sort indexes'),
+        (37, 'remote control enrollments enabled'),
+        (38, 'external agent config imports'),
+        (39, 'threads recency at'),
+        (40, 'threads history mode'),
+        (41, 'threads name'),
+        (42, 'drop agent jobs'),
+        (43, 'threads is pinned'),
+        (44, 'external agent config imports provider id'),
+        (45, 'threads section'),
+        (46, 'threads section order'),
+        (47, 'rollout migration state'),
+        (48, 'thread section appearance'),
+        (49, 'projects'),
+        (50, 'threads section empty preview indexes'),
+        (51, 'thread artifacts'),
+        (52, 'projects recency'),
+        (53, 'threads originator'),
+        (54, 'threads daybreak enabled'),
+        (55, 'thread attachments'),
+    ],
+    HISTORY_DB: [
+        (1, 'thread history'),
+        (2, 'thread items item type'),
+        (3, 'turn rollout positions'),
+        (4, 'thread items updated at ordinal'),
+        (5, 'thread realtime items'),
+        (6, 'thread turn ends'),
+    ],
+}
+
+EXPECTED_SCHEMA: dict[str, str] = {
+    STATE_DB: """\
+-- index idx_projects_position on projects
+CREATE INDEX idx_projects_position
+    ON projects(position ASC, id ASC)
+-- index idx_thread_attachments_thread_created_id on thread_attachments
+CREATE INDEX idx_thread_attachments_thread_created_id
+    ON thread_attachments(thread_id, created_at, id)
+-- index idx_thread_dynamic_tools_thread on thread_dynamic_tools
+CREATE INDEX idx_thread_dynamic_tools_thread ON thread_dynamic_tools(thread_id)
+-- index idx_thread_spawn_edges_parent_status on thread_spawn_edges
+CREATE INDEX idx_thread_spawn_edges_parent_status
+    ON thread_spawn_edges(parent_thread_id, status)
+-- index idx_threads_archived on threads
+CREATE INDEX idx_threads_archived ON threads(archived)
+-- index idx_threads_archived_cwd_created_at_ms on threads
+CREATE INDEX idx_threads_archived_cwd_created_at_ms ON threads(archived, cwd, created_at_ms DESC, id DESC)
+-- index idx_threads_archived_cwd_recency_at_ms on threads
+CREATE INDEX idx_threads_archived_cwd_recency_at_ms
+    ON threads(archived, cwd, recency_at_ms DESC, id DESC)
+-- index idx_threads_archived_cwd_updated_at_ms on threads
+CREATE INDEX idx_threads_archived_cwd_updated_at_ms ON threads(archived, cwd, updated_at_ms DESC, id DESC)
+-- index idx_threads_created_at on threads
+CREATE INDEX idx_threads_created_at ON threads(created_at DESC, id DESC)
+-- index idx_threads_created_at_ms on threads
+CREATE INDEX idx_threads_created_at_ms ON threads(created_at_ms DESC, id DESC)
+-- index idx_threads_pinned_recency_at_ms on threads
+CREATE INDEX idx_threads_pinned_recency_at_ms
+    ON threads(archived, recency_at_ms DESC, id DESC)
+    WHERE is_pinned = 1 AND preview <> ''
+-- index idx_threads_project_id on threads
+CREATE INDEX idx_threads_project_id
+    ON threads(project_id, archived, created_at_ms DESC, id DESC)
+    WHERE project_id IS NOT NULL
+-- index idx_threads_project_recency on threads
+CREATE INDEX idx_threads_project_recency
+    ON threads(project_id, recency_at_ms DESC)
+    WHERE archived = 0 AND project_id IS NOT NULL
+-- index idx_threads_provider on threads
+CREATE INDEX idx_threads_provider ON threads(model_provider)
+-- index idx_threads_recency_at_ms on threads
+CREATE INDEX idx_threads_recency_at_ms
+    ON threads(recency_at_ms DESC, id DESC)
+-- index idx_threads_section_position on threads
+CREATE INDEX idx_threads_section_position
+    ON threads(archived, thread_section_id, section_position ASC, id ASC)
+    WHERE thread_section_id IS NOT NULL
+-- index idx_threads_section_recency_at_ms on threads
+CREATE INDEX idx_threads_section_recency_at_ms
+    ON threads(archived, thread_section_id, recency_at_ms DESC, id DESC)
+    WHERE thread_section_id IS NOT NULL
+-- index idx_threads_source on threads
+CREATE INDEX idx_threads_source ON threads(source)
+-- index idx_threads_updated_at on threads
+CREATE INDEX idx_threads_updated_at ON threads(updated_at DESC, id DESC)
+-- index idx_threads_updated_at_ms on threads
+CREATE INDEX idx_threads_updated_at_ms ON threads(updated_at_ms DESC, id DESC)
+-- index idx_threads_visible_created_at_ms on threads
+CREATE INDEX idx_threads_visible_created_at_ms
+    ON threads(archived, created_at_ms DESC)
+    WHERE preview <> ''
+-- index idx_threads_visible_recency_at_ms on threads
+CREATE INDEX idx_threads_visible_recency_at_ms
+    ON threads(archived, recency_at_ms DESC, id DESC)
+    WHERE preview <> ''
+-- index idx_threads_visible_updated_at_ms on threads
+CREATE INDEX idx_threads_visible_updated_at_ms
+    ON threads(archived, updated_at_ms DESC)
+    WHERE preview <> ''
+-- table _sqlx_migrations on _sqlx_migrations
+CREATE TABLE _sqlx_migrations (
+    version BIGINT PRIMARY KEY,
+    description TEXT NOT NULL,
+    installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    success BOOLEAN NOT NULL,
+    checksum BLOB NOT NULL,
+    execution_time BIGINT NOT NULL
+)
+-- table backfill_state on backfill_state
+CREATE TABLE backfill_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    status TEXT NOT NULL,
+    last_watermark TEXT,
+    last_success_at INTEGER,
+    updated_at INTEGER NOT NULL
+)
+-- table external_agent_config_imports on external_agent_config_imports
+CREATE TABLE external_agent_config_imports (
+    import_id TEXT PRIMARY KEY,
+    completed_at_ms INTEGER NOT NULL,
+    successes TEXT NOT NULL,
+    failures TEXT NOT NULL
+, provider_id TEXT)
+-- table project_idempotency_keys on project_idempotency_keys
+CREATE TABLE project_idempotency_keys (
+    key TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL
+)
+-- table project_roots on project_roots
+CREATE TABLE project_roots (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    PRIMARY KEY (project_id, position)
+)
+-- table projects on projects
+CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    position INTEGER NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+)
+-- table remote_control_enrollments on remote_control_enrollments
+CREATE TABLE remote_control_enrollments (
+    websocket_url TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    app_server_client_name TEXT NOT NULL,
+    server_id TEXT NOT NULL,
+    environment_id TEXT NOT NULL,
+    server_name TEXT NOT NULL,
+    updated_at INTEGER NOT NULL, remote_control_enabled INTEGER,
+    PRIMARY KEY (websocket_url, account_id, app_server_client_name)
+)
+-- table rollout_migration_skipped_rollouts on rollout_migration_skipped_rollouts
+CREATE TABLE rollout_migration_skipped_rollouts (
+    migration_id TEXT NOT NULL,
+    rollout_path TEXT NOT NULL,
+    rollout_size_bytes INTEGER NOT NULL,
+    rollout_modified_at_ns INTEGER NOT NULL,
+    skip_reason TEXT NOT NULL,
+    skipped_at INTEGER NOT NULL,
+    PRIMARY KEY (migration_id, rollout_path)
+)
+-- table rollout_migration_state on rollout_migration_state
+CREATE TABLE rollout_migration_state (
+    migration_id TEXT PRIMARY KEY,
+    last_checked_thread_created_at INTEGER,
+    last_checked_thread_id TEXT,
+    updated_at INTEGER NOT NULL
+)
+-- table sqlite_sequence on sqlite_sequence
+CREATE TABLE sqlite_sequence(name,seq)
+-- table thread_attachments on thread_attachments
+CREATE TABLE "thread_attachments" (
+    id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    attachment_type TEXT NOT NULL,
+    identity_key TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE (thread_id, attachment_type, identity_key)
+)
+-- table thread_dynamic_tools on thread_dynamic_tools
+CREATE TABLE thread_dynamic_tools (
+    thread_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    input_schema TEXT NOT NULL, defer_loading INTEGER NOT NULL DEFAULT 0, namespace TEXT,
+    PRIMARY KEY(thread_id, position),
+    FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE
+)
+-- table thread_sections on thread_sections
+CREATE TABLE thread_sections (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL
+, appearance TEXT)
+-- table thread_spawn_edges on thread_spawn_edges
+CREATE TABLE thread_spawn_edges (
+    parent_thread_id TEXT NOT NULL,
+    child_thread_id TEXT NOT NULL PRIMARY KEY,
+    status TEXT NOT NULL
+)
+-- table threads on threads
+CREATE TABLE threads (
+    id TEXT PRIMARY KEY,
+    rollout_path TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    model_provider TEXT NOT NULL,
+    cwd TEXT NOT NULL,
+    title TEXT NOT NULL,
+    sandbox_policy TEXT NOT NULL,
+    approval_mode TEXT NOT NULL,
+    tokens_used INTEGER NOT NULL DEFAULT 0,
+    has_user_event INTEGER NOT NULL DEFAULT 0,
+    archived INTEGER NOT NULL DEFAULT 0,
+    archived_at INTEGER,
+    git_sha TEXT,
+    git_branch TEXT,
+    git_origin_url TEXT
+, cli_version TEXT NOT NULL DEFAULT '', first_user_message TEXT NOT NULL DEFAULT '', agent_nickname TEXT, agent_role TEXT, memory_mode TEXT NOT NULL DEFAULT 'enabled', model TEXT, reasoning_effort TEXT, agent_path TEXT, created_at_ms INTEGER, updated_at_ms INTEGER, thread_source TEXT, preview TEXT NOT NULL DEFAULT '', recency_at INTEGER NOT NULL DEFAULT 0, recency_at_ms INTEGER NOT NULL DEFAULT 0, history_mode TEXT NOT NULL DEFAULT 'legacy', name TEXT, is_pinned INTEGER NOT NULL DEFAULT 0, thread_section_id TEXT
+    REFERENCES thread_sections(id) ON DELETE SET NULL, section_position INTEGER, section_entered_at_ms INTEGER, project_id TEXT
+    REFERENCES projects(id) ON DELETE SET NULL, originator TEXT, daybreak_enabled BOOLEAN)
+-- trigger threads_created_at_ms_after_insert on threads
+CREATE TRIGGER threads_created_at_ms_after_insert
+AFTER INSERT ON threads
+WHEN NEW.created_at_ms IS NULL
+BEGIN
+    UPDATE threads
+    SET created_at_ms = NEW.created_at * 1000
+    WHERE id = NEW.id;
+END
+-- trigger threads_created_at_ms_after_update on threads
+CREATE TRIGGER threads_created_at_ms_after_update
+AFTER UPDATE OF created_at ON threads
+WHEN NEW.created_at != OLD.created_at
+ AND NEW.created_at_ms IS OLD.created_at_ms
+BEGIN
+    UPDATE threads
+    SET created_at_ms = NEW.created_at * 1000
+    WHERE id = NEW.id;
+END
+-- trigger threads_recency_at_after_insert on threads
+CREATE TRIGGER threads_recency_at_after_insert
+AFTER INSERT ON threads
+WHEN NEW.recency_at_ms = 0
+BEGIN
+    UPDATE threads
+    SET recency_at = NEW.updated_at,
+        recency_at_ms = COALESCE(NEW.updated_at_ms, NEW.updated_at * 1000)
+    WHERE id = NEW.id;
+END
+-- trigger threads_updated_at_ms_after_insert on threads
+CREATE TRIGGER threads_updated_at_ms_after_insert
+AFTER INSERT ON threads
+WHEN NEW.updated_at_ms IS NULL
+BEGIN
+    UPDATE threads
+    SET updated_at_ms = NEW.updated_at * 1000
+    WHERE id = NEW.id;
+END
+-- trigger threads_updated_at_ms_after_update on threads
+CREATE TRIGGER threads_updated_at_ms_after_update
+AFTER UPDATE OF updated_at ON threads
+WHEN NEW.updated_at != OLD.updated_at
+ AND NEW.updated_at_ms IS OLD.updated_at_ms
+BEGIN
+    UPDATE threads
+    SET updated_at_ms = NEW.updated_at * 1000
+    WHERE id = NEW.id;
+END
+""",
+    HISTORY_DB: """\
+-- index idx_thread_items_by_turn_page on thread_items
+CREATE INDEX idx_thread_items_by_turn_page
+    ON thread_items(thread_id, turn_id, rollout_ordinal)
+-- index idx_thread_items_by_turn_updated_page on thread_items
+CREATE INDEX idx_thread_items_by_turn_updated_page
+    ON thread_items(thread_id, turn_id, updated_at_ordinal)
+-- index idx_thread_items_page on thread_items
+CREATE UNIQUE INDEX idx_thread_items_page
+    ON thread_items(thread_id, rollout_ordinal)
+-- index idx_thread_items_updated_page on thread_items
+CREATE INDEX idx_thread_items_updated_page
+    ON thread_items(thread_id, updated_at_ordinal)
+-- index idx_thread_items_user_messages on thread_items
+CREATE INDEX idx_thread_items_user_messages
+    ON thread_items(thread_id, rollout_ordinal)
+    WHERE item_type = 'userMessage'
+-- index idx_thread_realtime_items_boundary on thread_realtime_items
+CREATE INDEX idx_thread_realtime_items_boundary
+    ON thread_realtime_items(thread_id, rollout_ordinal)
+    WHERE item_type IN ('realtime_session_started', 'realtime_session_closed')
+-- index idx_thread_realtime_items_page on thread_realtime_items
+CREATE UNIQUE INDEX idx_thread_realtime_items_page
+    ON thread_realtime_items(thread_id, rollout_ordinal)
+-- index idx_thread_turns_end_page on thread_turns
+CREATE INDEX idx_thread_turns_end_page
+    ON thread_turns(thread_id, rollout_end_ordinal, turn_id)
+    WHERE rollout_end_ordinal IS NOT NULL
+-- index idx_thread_turns_page on thread_turns
+CREATE UNIQUE INDEX idx_thread_turns_page
+    ON thread_turns(thread_id, rollout_ordinal)
+-- table _sqlx_migrations on _sqlx_migrations
+CREATE TABLE _sqlx_migrations (
+    version BIGINT PRIMARY KEY,
+    description TEXT NOT NULL,
+    installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    success BOOLEAN NOT NULL,
+    checksum BLOB NOT NULL,
+    execution_time BIGINT NOT NULL
+)
+-- table thread_history_projection_state on thread_history_projection_state
+CREATE TABLE thread_history_projection_state (
+    thread_id TEXT PRIMARY KEY,
+    next_rollout_byte_offset INTEGER NOT NULL,
+    next_rollout_ordinal INTEGER NOT NULL
+)
+-- table thread_items on thread_items
+CREATE TABLE thread_items (
+    thread_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    rollout_ordinal INTEGER NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    item_json TEXT NOT NULL, item_type TEXT NOT NULL DEFAULT '', updated_at_ordinal INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (thread_id, turn_id, item_id)
+)
+-- table thread_realtime_items on thread_realtime_items
+CREATE TABLE thread_realtime_items (
+    thread_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    rollout_ordinal INTEGER NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    item_type TEXT NOT NULL,
+    item_json TEXT NOT NULL,
+    PRIMARY KEY (thread_id, item_id)
+)
+-- table thread_turns on thread_turns
+CREATE TABLE thread_turns (
+    thread_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    rollout_ordinal INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    error_json TEXT,
+    started_at INTEGER,
+    completed_at INTEGER,
+    duration_ms INTEGER,
+    first_user_item_id TEXT,
+    final_agent_item_id TEXT, rollout_byte_offset INTEGER, rollout_end_ordinal INTEGER, rollout_end_byte_offset INTEGER,
+    PRIMARY KEY (thread_id, turn_id)
+)
+-- trigger thread_realtime_items_projection_cleanup on thread_history_projection_state
+CREATE TRIGGER thread_realtime_items_projection_cleanup
+    AFTER DELETE ON thread_history_projection_state
+BEGIN
+    DELETE FROM thread_realtime_items WHERE thread_id = OLD.thread_id;
+END
+""",
+}
+
+
+class Abort(Exception):
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class Locked(Exception):
+    pass
+
+
+# --------------------------------------------------------------------------
+# Schema verification
+# --------------------------------------------------------------------------
+
+
+def schema_dump(conn: sqlite3.Connection) -> str:
+    rows = conn.execute(
+        "SELECT type, name, tbl_name, sql FROM sqlite_master "
+        "WHERE sql IS NOT NULL ORDER BY type, name"
+    ).fetchall()
+    return "".join(f"-- {t} {n} on {tb}\n{sql}\n" for t, n, tb, sql in rows)
+
+
+def migration_list(conn: sqlite3.Connection) -> list[tuple[int, str]]:
+    return [
+        (int(v), d)
+        for v, d in conn.execute(
+            "SELECT version, description FROM _sqlx_migrations ORDER BY version"
+        )
+    ]
+
+
+def verify_schema(conn: sqlite3.Connection, name: str) -> None:
+    try:
+        got_migrations = migration_list(conn)
+        got_schema = schema_dump(conn)
+    except sqlite3.Error as exc:
+        raise Abort(EXIT_SCHEMA, f"{name}: cannot inspect schema: {exc}") from exc
+    if got_migrations != EXPECTED_MIGRATIONS[name]:
+        diff = "\n".join(
+            difflib.unified_diff(
+                [f"{v} {d}" for v, d in EXPECTED_MIGRATIONS[name]],
+                [f"{v} {d}" for v, d in got_migrations],
+                "pinned", "actual", lineterm="",
+            )
+        )
+        raise Abort(EXIT_SCHEMA, f"{name}: _sqlx_migrations differ from pinned list\n{diff}")
+    if got_schema != EXPECTED_SCHEMA[name]:
+        diff = "\n".join(
+            difflib.unified_diff(
+                EXPECTED_SCHEMA[name].splitlines(),
+                got_schema.splitlines(),
+                "pinned", "actual", lineterm="",
+            )
+        )
+        raise Abort(EXIT_SCHEMA, f"{name}: schema differs from pinned schema\n{diff}")
+
+
+def connect(path: Path, *, readonly: bool, timeout: float) -> sqlite3.Connection:
+    if not path.is_file():
+        raise Abort(EXIT_SCHEMA, f"{path.name}: database missing at {path}")
+    mode = "ro" if readonly else "rw"
+    conn = sqlite3.connect(
+        f"file:{path}?mode={mode}", uri=True, timeout=timeout, isolation_level=None
+    )
+    return conn
+
+
+# --------------------------------------------------------------------------
+# Planning
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class Plan:
+    rows: dict[str, str] = field(default_factory=dict)  # thread id -> rollout_path
+    files: dict[str, list[Path]] = field(default_factory=dict)  # thread id -> files
+    orphans: set[str] = field(default_factory=set)  # file exists, no thread row
+    missing: set[str] = field(default_factory=set)  # row exists, file missing
+    skipped: list[tuple[str, str]] = field(default_factory=list)
+
+    @property
+    def ids(self) -> list[str]:
+        return sorted(set(self.rows) | self.orphans)
+
+    def skip(self, key: str, reason: str) -> None:
+        self.skipped.append((key, reason))
+
+
+def validate_row_path(tid: str, rollout_path: str, archive_dir: str) -> str | None:
+    if not os.path.isabs(rollout_path):
+        return "rollout_path is not absolute"
+    norm = os.path.normpath(rollout_path)
+    if os.path.dirname(norm) != archive_dir:
+        return "rollout_path is not inside archived_sessions/"
+    match = ROLLOUT_RE.match(os.path.basename(norm))
+    if match is None or match.group(2):
+        return "rollout_path is not a rollout .jsonl file name"
+    if match.group(1) != tid:
+        return "rollout_path file name does not carry the thread id"
+    if os.path.lexists(norm):
+        st = os.lstat(norm)
+        if stat.S_ISLNK(st.st_mode):
+            return "rollout_path is a symlink"
+        if not stat.S_ISREG(st.st_mode):
+            return "rollout_path is not a regular file"
+    return None
+
+
+def writer_lock_held(home: Path, tid: str) -> bool:
+    lock = home / WRITER_LOCK_DIR / f"{tid}.lock"
+    try:
+        fd = os.open(lock, os.O_RDONLY)
+    except FileNotFoundError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+    return False
+
+
+def build_plan(home: Path, state: sqlite3.Connection) -> Plan:
+    archive = home / ARCHIVE_DIR
+    if archive.is_symlink():
+        raise Abort(EXIT_SCHEMA, f"{ARCHIVE_DIR}/ is a symlink; refusing to operate")
+    if not archive.is_dir():
+        raise Abort(EXIT_SCHEMA, f"{ARCHIVE_DIR}/ missing at {archive}")
+    archive_str = os.fspath(archive)
+
+    plan = Plan()
+    row_paths: dict[str, str] = {}
+    for tid, rollout_path in state.execute(
+        "SELECT id, rollout_path FROM threads WHERE archived = 1 ORDER BY id"
+    ):
+        reason = validate_row_path(tid, rollout_path, archive_str)
+        if reason:
+            plan.skip(tid, f"{reason} ({rollout_path})")
+        else:
+            row_paths[tid] = rollout_path
+
+    files_by_id: dict[str, list[tuple[str, Path]]] = {}
+    with os.scandir(archive) as entries:
+        for entry in sorted(entries, key=lambda e: e.name):
+            if entry.is_symlink():
+                plan.skip(entry.name, "symlink in archived_sessions/; left alone")
+                continue
+            if not entry.is_file(follow_symlinks=False):
+                plan.skip(entry.name, "not a regular file; left alone")
+                continue
+            match = ROLLOUT_RE.match(entry.name)
+            if match is None:
+                plan.skip(entry.name, "unrecognized file name; left alone")
+                continue
+            canonical = entry.path[:-4] if match.group(2) else entry.path
+            files_by_id.setdefault(match.group(1), []).append((canonical, Path(entry.path)))
+
+    for tid, rollout_path in row_paths.items():
+        entries = files_by_id.pop(tid, [])
+        if any(canonical != rollout_path for canonical, _ in entries):
+            plan.skip(tid, "archived_sessions/ holds a file for this thread that does not match rollout_path")
+            continue
+        plan.rows[tid] = rollout_path
+        plan.files[tid] = [path for _, path in entries]
+        if not entries:
+            plan.missing.add(tid)
+
+    for tid, entries in files_by_id.items():
+        row = state.execute(
+            "SELECT archived, rollout_path FROM threads WHERE id = ?", (tid,)
+        ).fetchone()
+        if row is None:
+            plan.orphans.add(tid)
+            plan.files[tid] = [path for _, path in entries]
+        elif row[0] != 1:
+            plan.skip(tid, "file in archived_sessions/ but thread row is not archived; left alone")
+        else:
+            plan.skip(tid, "file in archived_sessions/ but archived row points elsewhere; left alone")
+
+    for tid in plan.ids:
+        if writer_lock_held(home, tid):
+            plan.skip(tid, "thread writer lock is held by a running Codex process; left alone")
+            plan.rows.pop(tid, None)
+            plan.orphans.discard(tid)
+            plan.missing.discard(tid)
+            plan.files.pop(tid, None)
+    return plan
+
+
+# --------------------------------------------------------------------------
+# Counting and jsonl filtering
+# --------------------------------------------------------------------------
+
+HISTORY_TABLES = (
+    "thread_items",
+    "thread_turns",
+    "thread_realtime_items",
+    "thread_history_projection_state",
+)
+STATE_TABLES = (
+    ("thread_attachments", "thread_id"),
+    ("thread_dynamic_tools", "thread_id"),
+    ("thread_spawn_edges", "child_thread_id"),
+    ("threads", "id"),
+)
+IN_IDS = "IN (SELECT value FROM json_each(?))"
+
+
+def skipped_rollout_paths(home: Path, plan: Plan, ids: list[str]) -> list[str]:
+    paths: list[str] = []
+    for tid in ids:
+        for path in plan.files.get(tid, []):
+            paths.append(os.fspath(path))
+            paths.append(os.path.relpath(path, home))
+        if tid in plan.rows:
+            paths.append(plan.rows[tid])
+            paths.append(os.path.relpath(plan.rows[tid], home))
+    return sorted(set(paths))
+
+
+def count_rows(
+    state: sqlite3.Connection, history: sqlite3.Connection, home: Path, plan: Plan, ids: list[str]
+) -> dict[str, int]:
+    ids_json = json.dumps(ids)
+    counts: dict[str, int] = {}
+    for table in HISTORY_TABLES:
+        counts[table] = history.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE thread_id {IN_IDS}", (ids_json,)
+        ).fetchone()[0]
+    for table, column in STATE_TABLES:
+        counts[table] = state.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE {column} {IN_IDS}", (ids_json,)
+        ).fetchone()[0]
+    counts["rollout_migration_skipped_rollouts"] = state.execute(
+        f"SELECT COUNT(*) FROM rollout_migration_skipped_rollouts WHERE rollout_path {IN_IDS}",
+        (json.dumps(skipped_rollout_paths(home, plan, ids)),),
+    ).fetchone()[0]
+    return counts
+
+
+def filter_jsonl(data: bytes, key: str, ids: set[str]) -> tuple[bytes, int]:
+    kept: list[bytes] = []
+    removed = 0
+    for line in data.splitlines(keepends=True):
+        text = line.strip()
+        if text:
+            try:
+                obj = json.loads(text)
+            except ValueError:
+                obj = None
+            if isinstance(obj, dict) and obj.get(key) in ids:
+                removed += 1
+                continue
+        kept.append(line)
+    return b"".join(kept), removed
+
+
+JSONL_FILES = ((HISTORY_JSONL, "session_id"), (SESSION_INDEX_JSONL, "id"))
+
+
+def count_jsonl(home: Path, ids: set[str]) -> dict[str, int]:
+    counts = {}
+    for name, key in JSONL_FILES:
+        path = home / name
+        counts[name] = filter_jsonl(path.read_bytes(), key, ids)[1] if path.is_file() else 0
+    return counts
+
+
+# --------------------------------------------------------------------------
+# Execution
+# --------------------------------------------------------------------------
+
+
+def lock_file(path: Path, timeout: float) -> int | None:
+    try:
+        fd = os.open(path, os.O_RDWR)
+    except FileNotFoundError:
+        return None
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except OSError:
+            if time.monotonic() >= deadline:
+                os.close(fd)
+                raise Locked(f"{path.name}: flock is held by another process")
+            time.sleep(0.05)
+
+
+def begin_immediate(conn: sqlite3.Connection, name: str) -> None:
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError as exc:
+        raise Locked(f"{name}: {exc}") from exc
+
+
+def rewrite_locked(fd: int, key: str, ids: set[str]) -> int:
+    with os.fdopen(os.dup(fd), "r+b") as f:
+        f.seek(0)
+        data = f.read()
+        new, removed = filter_jsonl(data, key, ids)
+        if removed:
+            f.seek(0)
+            f.truncate()
+            f.write(new)
+            f.flush()
+            os.fsync(f.fileno())
+    return removed
+
+
+def unlink_regular(path: Path) -> bool:
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(st.st_mode):
+        raise OSError(f"{path}: not a regular file at unlink time; left alone")
+    os.unlink(path)
+    return True
+
+
+def execute(home: Path, plan: Plan, timeout: float) -> tuple[dict[str, int], list[str]]:
+    state = connect(home / STATE_DB, readonly=False, timeout=timeout)
+    history = connect(home / HISTORY_DB, readonly=False, timeout=timeout)
+    verify_schema(state, STATE_DB)
+    verify_schema(history, HISTORY_DB)
+
+    fds: list[tuple[str, str, int]] = []
+    in_txn: list[sqlite3.Connection] = []
+
+    def release() -> None:
+        for conn in in_txn:
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+        in_txn.clear()
+        for _, _, fd in fds:
+            os.close(fd)
+        fds.clear()
+
+    try:
+        for name, key in JSONL_FILES:
+            fd = lock_file(home / name, timeout)
+            if fd is not None:
+                fds.append((name, key, fd))
+        begin_immediate(history, HISTORY_DB)
+        in_txn.append(history)
+        begin_immediate(state, STATE_DB)
+        in_txn.append(state)
+    except Locked as exc:
+        release()
+        raise Abort(EXIT_LOCKED, f"could not acquire locks, nothing deleted: {exc}") from exc
+
+    try:
+        # Re-check inside the write transaction so concurrent unarchive/delete
+        # activity since planning cannot be overwritten.
+        changed: list[str] = []
+        confirmed: list[str] = []
+        for tid in plan.ids:
+            row = state.execute(
+                "SELECT archived, rollout_path FROM threads WHERE id = ?", (tid,)
+            ).fetchone()
+            if tid in plan.rows:
+                ok = row is not None and row[0] == 1 and row[1] == plan.rows[tid]
+            else:
+                ok = row is None
+            (confirmed if ok else changed).append(tid)
+
+        counts = {"threads_confirmed": len(confirmed), "threads_changed": len(changed)}
+        ids_json = json.dumps(confirmed)
+        for table in HISTORY_TABLES:
+            counts[table] = history.execute(
+                f"DELETE FROM {table} WHERE thread_id {IN_IDS}", (ids_json,)
+            ).rowcount
+        for table, column in STATE_TABLES:
+            counts[table] = state.execute(
+                f"DELETE FROM {table} WHERE {column} {IN_IDS}", (ids_json,)
+            ).rowcount
+        counts["rollout_migration_skipped_rollouts"] = state.execute(
+            f"DELETE FROM rollout_migration_skipped_rollouts WHERE rollout_path {IN_IDS}",
+            (json.dumps(skipped_rollout_paths(home, plan, confirmed)),),
+        ).rowcount
+
+        id_set = set(confirmed)
+        for name, key, fd in fds:
+            counts[name] = rewrite_locked(fd, key, id_set)
+        for name, _ in JSONL_FILES:
+            counts.setdefault(name, 0)
+
+        history.execute("COMMIT")
+        in_txn.remove(history)
+        state.execute("COMMIT")
+        in_txn.remove(state)
+    finally:
+        release()
+        state.close()
+        history.close()
+
+    unlinked = 0
+    failures: list[str] = []
+    for tid in confirmed:
+        for path in plan.files.get(tid, []):
+            try:
+                unlinked += unlink_regular(path)
+            except OSError as exc:
+                failures.append(str(exc))
+    counts["files"] = unlinked
+    return counts, changed + failures
+
+
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
+
+
+def print_plan(plan: Plan, counts: dict[str, int], jsonl: dict[str, int], verbose: bool) -> None:
+    print(f"archived thread rows to delete: {len(plan.rows)}")
+    print(f"  with transcript file:         {len(plan.rows) - len(plan.missing)}")
+    print(f"  transcript already missing:   {len(plan.missing)}")
+    print(f"orphan transcript files (no thread row): {len(plan.orphans)}")
+    print(f"transcript files to unlink: {sum(len(v) for v in plan.files.values())}")
+    print("database rows to delete:")
+    for table in HISTORY_TABLES:
+        print(f"  {HISTORY_DB}/{table}: {counts[table]}")
+    for table, _ in STATE_TABLES:
+        print(f"  {STATE_DB}/{table}: {counts[table]}")
+    print(f"  {STATE_DB}/rollout_migration_skipped_rollouts: {counts['rollout_migration_skipped_rollouts']}")
+    print("jsonl lines to delete:")
+    for name, _ in JSONL_FILES:
+        print(f"  {name}: {jsonl[name]}")
+    if verbose:
+        print("thread ids:")
+        for tid in plan.ids:
+            print(f"  {tid}")
+    if plan.skipped:
+        print(f"skipped, left untouched ({len(plan.skipped)}):")
+        for key, reason in plan.skipped:
+            print(f"  {key}: {reason}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="codex-purge-archived",
+        description="Permanently delete archived Codex sessions and their metadata.",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="report only; change nothing")
+    parser.add_argument(
+        "--codex-home",
+        type=Path,
+        default=Path(os.environ.get("CODEX_HOME", "~/.codex")),
+        help="Codex home directory (default: $CODEX_HOME or ~/.codex)",
+    )
+    parser.add_argument(
+        "--lock-timeout", type=float, default=5.0, help="seconds to wait for locks (default 5)"
+    )
+    parser.add_argument("-y", "--yes", action="store_true", help="skip the confirmation prompt")
+    parser.add_argument("-v", "--verbose", action="store_true", help="list thread ids")
+    parser.add_argument(
+        "--print-schema", action="store_true",
+        help="print the live schema dump in pinned format and exit (for re-pinning)",
+    )
+    args = parser.parse_args(argv)
+
+    home = args.codex_home.expanduser()
+    try:
+        if not home.is_dir():
+            raise Abort(EXIT_ERROR, f"codex home is not a directory: {home}")
+        home = home.resolve()
+
+        if args.print_schema:
+            for name in (STATE_DB, HISTORY_DB):
+                conn = connect(home / name, readonly=True, timeout=args.lock_timeout)
+                print(f"##### {name}\nMIGRATIONS = {migration_list(conn)!r}\n{schema_dump(conn)}")
+                conn.close()
+            return EXIT_OK
+
+        state = connect(home / STATE_DB, readonly=True, timeout=args.lock_timeout)
+        history = connect(home / HISTORY_DB, readonly=True, timeout=args.lock_timeout)
+        verify_schema(state, STATE_DB)
+        verify_schema(history, HISTORY_DB)
+        plan = build_plan(home, state)
+        counts = count_rows(state, history, home, plan, plan.ids)
+        jsonl = count_jsonl(home, set(plan.ids))
+        state.close()
+        history.close()
+
+        print(f"codex home: {home}")
+        print("mode: DRY RUN" if args.dry_run else "mode: LIVE")
+        print_plan(plan, counts, jsonl, args.verbose)
+        if args.dry_run or not plan.ids:
+            if not plan.ids:
+                print("nothing to delete")
+            return EXIT_OK
+
+        if not args.yes and sys.stdin.isatty():
+            answer = input(f"Permanently delete {len(plan.ids)} archived threads? [y/N] ")
+            if answer.strip().lower() not in ("y", "yes"):
+                print("aborted")
+                return EXIT_ERROR
+
+        done, problems = execute(home, plan, args.lock_timeout)
+        print("deleted:")
+        for key in sorted(done):
+            print(f"  {key}: {done[key]}")
+        if problems:
+            print(f"problems ({len(problems)}); rerun to reclaim:")
+            for item in problems:
+                print(f"  {item}")
+            return EXIT_ERROR
+        return EXIT_OK
+    except Abort as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return exc.code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
