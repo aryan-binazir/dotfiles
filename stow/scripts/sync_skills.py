@@ -12,7 +12,8 @@ from pathlib import Path
 SKILLS_REPO = Path("~/repos/skills").expanduser()
 CURSOR_PLUGINS_REPO = Path("~/repos/cursor-plugins").expanduser()
 CURSOR_PLUGINS_URL = "https://github.com/cursor/plugins.git"
-UNSLOP_PATH = Path("pstack/skills/unslop")
+PSTACK_SKILLS_PATH = Path("pstack/skills")
+PSTACK_EXCLUDED_SKILL_NAMES = {"setup-pstack"}
 HUMANLAYER_SKILLS_REPO = Path("~/repos/humanlayer-skills").expanduser()
 HUMANLAYER_SKILLS_URL = "https://github.com/humanlayer/skills.git"
 SHOW_ME_PATH = Path("plugins/show-me/skills/show-me")
@@ -24,7 +25,6 @@ SOURCE_DIRS = [
     SKILLS_REPO / "skills" / "productivity",
 ]
 SOURCE_SKILLS = [
-    CURSOR_PLUGINS_REPO / UNSLOP_PATH,
     HUMANLAYER_SKILLS_REPO / SHOW_ME_PATH,
 ]
 APP_SKILL_DIRS = [
@@ -47,24 +47,8 @@ def require_dir(path: Path, label: str) -> None:
         raise RuntimeError(f"{label} is not a directory: {path}")
 
 
-def clone_sparse_repo(repo: Path, label: str, url: str, sparse_path: Path) -> None:
-    if repo.exists():
-        require_dir(repo, label)
-        return
-
-    print(f"Cloning {url} into {repo}")
+def set_sparse_checkout(repo: Path, sparse_path: Path) -> None:
     try:
-        subprocess.run(
-            [
-                "git",
-                "clone",
-                "--filter=blob:none",
-                "--sparse",
-                url,
-                str(repo),
-            ],
-            check=True,
-        )
         subprocess.run(
             [
                 "git",
@@ -77,7 +61,47 @@ def clone_sparse_repo(repo: Path, label: str, url: str, sparse_path: Path) -> No
             check=True,
         )
     except subprocess.CalledProcessError as error:
-        raise RuntimeError(f"git clone failed for {url}") from error
+        raise RuntimeError(
+            f"git sparse-checkout failed in {repo} for {sparse_path}"
+        ) from error
+
+
+def clone_sparse_repo(repo: Path, label: str, url: str, sparse_path: Path) -> None:
+    if repo.exists():
+        require_dir(repo, label)
+    else:
+        print(f"Cloning {url} into {repo}")
+        try:
+            subprocess.run(
+                [
+                    "git",
+                    "clone",
+                    "--filter=blob:none",
+                    "--sparse",
+                    url,
+                    str(repo),
+                ],
+                check=True,
+            )
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(f"git clone failed for {url}") from error
+
+    set_sparse_checkout(repo, sparse_path)
+
+
+def iter_pstack_skill_dirs() -> list[Path]:
+    skills_dir = CURSOR_PLUGINS_REPO / PSTACK_SKILLS_PATH
+    require_dir(skills_dir, "pstack skills directory")
+
+    skill_dirs: list[Path] = []
+    for source_path in sorted(skills_dir.iterdir()):
+        if source_path.name in PSTACK_EXCLUDED_SKILL_NAMES:
+            print(f"Skipping pstack skill {source_path.name}")
+            continue
+        if not source_path.is_dir() or not (source_path / "SKILL.md").is_file():
+            continue
+        skill_dirs.append(source_path)
+    return skill_dirs
 
 
 def pull_skills() -> None:
@@ -86,7 +110,7 @@ def pull_skills() -> None:
         CURSOR_PLUGINS_REPO,
         "Cursor plugins repo",
         CURSOR_PLUGINS_URL,
-        UNSLOP_PATH,
+        PSTACK_SKILLS_PATH,
     )
     clone_sparse_repo(
         HUMANLAYER_SKILLS_REPO,
@@ -140,14 +164,24 @@ def symlink_skills() -> None:
     replaced = 0
     unchanged = 0
 
-    source_paths: list[Path] = []
+    candidates: list[Path] = []
     for source_dir in SOURCE_DIRS:
         for source_path in sorted(source_dir.iterdir()):
             if source_path.is_dir():
-                source_paths.append(source_path)
+                candidates.append(source_path)
 
-    source_paths.extend(SOURCE_SKILLS)
-    source_paths.append(hunk_skill_file.parent)
+    candidates.extend(SOURCE_SKILLS)
+    candidates.extend(iter_pstack_skill_dirs())
+    candidates.append(hunk_skill_file.parent)
+
+    source_paths: list[Path] = []
+    seen_names: set[str] = set()
+    for source_path in candidates:
+        if source_path.name in seen_names:
+            print(f"Skipping duplicate skill name {source_path.name}: {source_path}")
+            continue
+        seen_names.add(source_path.name)
+        source_paths.append(source_path)
 
     for source_path in source_paths:
         target_path = TARGET_DIR / source_path.name
