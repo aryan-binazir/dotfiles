@@ -13,7 +13,7 @@ SKILLS_REPO = Path("~/repos/skills").expanduser()
 CURSOR_PLUGINS_REPO = Path("~/repos/cursor-plugins").expanduser()
 CURSOR_PLUGINS_URL = "https://github.com/cursor/plugins.git"
 PSTACK_SKILLS_PATH = Path("pstack/skills")
-PSTACK_EXCLUDED_SKILL_NAMES = {"setup-pstack"}
+PSTACK_EXCLUDED_SKILL_NAMES = {"setup-pstack", "poteto-mode", "make-bot-ui"}
 HUMANLAYER_SKILLS_REPO = Path("~/repos/humanlayer-skills").expanduser()
 HUMANLAYER_SKILLS_URL = "https://github.com/humanlayer/skills.git"
 SHOW_ME_PATH = Path("plugins/show-me/skills/show-me")
@@ -89,6 +89,15 @@ def clone_sparse_repo(repo: Path, label: str, url: str, sparse_path: Path) -> No
     set_sparse_checkout(repo, sparse_path)
 
 
+def remove_excluded_pstack_links() -> None:
+    for skill_name in sorted(PSTACK_EXCLUDED_SKILL_NAMES):
+        target_path = TARGET_DIR / skill_name
+        if not target_path.is_symlink():
+            continue
+        print(f"Removing excluded pstack skill link {target_path}")
+        target_path.unlink()
+
+
 def iter_pstack_skill_dirs() -> list[Path]:
     skills_dir = CURSOR_PLUGINS_REPO / PSTACK_SKILLS_PATH
     require_dir(skills_dir, "pstack skills directory")
@@ -158,6 +167,7 @@ def symlink_skills() -> None:
     hunk_skill_file = hunk_skill_files[0]
 
     TARGET_DIR.mkdir(parents=True, exist_ok=True)
+    remove_excluded_pstack_links()
     print(f"Syncing skills into {TARGET_DIR}")
 
     created = 0
