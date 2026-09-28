@@ -67,6 +67,11 @@ stow -t ~ sway waybar ghostty kanshi
 - tmux
 - wofi
 
+### tmux agent attention
+
+The existing agent spinner also shows persistent unread checks and plays a
+completion sound. See [behavior, sound controls, and safe rollout](docs/tmux-agent-attention.md).
+
 ### Separate Configs
 
 My Neovim config: https://github.com/aryan-binazir/neovim-config
