@@ -47,24 +47,8 @@ alias hu='hunk diff origin/main...HEAD'
 alias h='herdr'
 alias pie='pi update --all && pi'
 
-# Keep this wrapper in sync with the copyable version in stow/scripts/gw.
-gw() {
-  if (( $# < 1 )); then
-    echo "error: usage: gw <name> [command...]" >&2
-    return 1
-  fi
-
-  local name="$1"
-  shift
-  local worktree
-
-  worktree="$(command gw "$name")" || return
-  builtin cd "$worktree" || return
-
-  (( $# == 0 )) && return 0
-  # Re-eval so shell aliases (acc, acd, acu, acdl, ...) expand.
-  eval "$(printf '%q ' "$@")"
-}
+# Shared shell function maintained in dotfiles.
+source "$HOME/repos/dotfiles/shell/gw.bash"
 
 # Re-enable hashing before loading NVM (fixes "hash: hashing disabled" error)
 set -h
