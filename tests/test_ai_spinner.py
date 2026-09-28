@@ -5,7 +5,9 @@ import pty
 import re
 import select
 import shlex
+import signal
 import struct
+import sys
 import termios
 import threading
 from pathlib import Path
@@ -57,9 +59,9 @@ class AttentionTest(unittest.TestCase):
                     process.wait(timeout=5)
         self.tmux("kill-server", check=False)
 
-    def start_daemon(self):
+    def start_daemon(self, extra_env=None):
         pid = self.tmux("display-message", "-p", "#{pid}").strip()
-        env = {**self.env, "TMUX": f"{self.socket},{pid},0"}
+        env = {**self.env, "TMUX": f"{self.socket},{pid},0", **(extra_env or {})}
         log = open(self.directory / f"daemon-{len(self.processes)}.log", "w")
         self.addCleanup(log.close)
         process = subprocess.Popen(["sh", str(SCRIPT)], env=env, stdout=log, stderr=log)
@@ -78,8 +80,8 @@ class AttentionTest(unittest.TestCase):
 
     def icon(self, scope="window", target=None):
         if scope == "window":
-            return self.tmux("show-options", "-wqv", "-t", target or self.window, "@ai_spinner").strip()
-        return self.tmux("show-options", "-qv", "-t", target or self.session, "@ai_spinner_s").strip()
+            return self.tmux("display-message", "-p", "-t", target or self.window, "#{E:@ai_spinner}").strip()
+        return self.tmux("display-message", "-p", "-t", target or self.session, "#{E:@ai_spinner_s}").strip()
 
     def working(self, pane=None):
         self.tmux("select-pane", "-t", pane or self.pane, "-T", "⠋ Agent")
@@ -89,6 +91,62 @@ class AttentionTest(unittest.TestCase):
 
     def sound_count(self):
         return len(self.sounds.read_text().splitlines()) if self.sounds.exists() else 0
+
+    def test_spinner_animation_does_not_repaint_stationary_application(self):
+        body = "\n".join(f"BODY_ROW_{i:02d}: stationary application content" for i in range(20))
+        self.tmux("respawn-pane", "-k", "-t", self.pane,
+                  'printf "%s\\n" ' + shlex.quote(body) + '; exec sleep 300')
+        configured = next(line for line in CONFIG.read_text().splitlines()
+                          if line.startswith("set -g @themepack-window-status-current-format "))
+        self.tmux("set-option", "-g", "window-status-current-format", shlex.split(configured)[3])
+        self.tmux("set-option", "-g", "status-interval", "0")
+        self.attach()
+        self.working()
+        self.start_daemon()
+        self.until(lambda: bool(self.icon()), "working")
+        time.sleep(0.4)
+        self.output.clear()
+        time.sleep(0.9)
+        output = bytes(self.output)
+        self.assertNotIn(b"BODY_ROW_", output, "animating the status bar must not repaint application rows")
+        frames = {c for c in output.decode(errors="replace") if c in "⡇⠏⠛⠹⢸⣰⣤⣆"}
+        self.assertGreaterEqual(len(frames), 2, "spinner must actually animate in the PTY")
+
+    def test_detached_work_is_tracked_without_animating(self):
+        self.working()
+        self.start_daemon()
+        self.until(lambda: bool(self.icon()), "detached work detected")
+        frame = self.icon()
+        time.sleep(0.9)
+        self.assertEqual(self.icon(), frame, "no clients means no animation traffic")
+        self.stopped()
+        self.until(lambda: self.icon() == "✓" and self.sound_count() == 1, "detached completion still detected")
+        self.attach()
+        self.until(lambda: self.icon() == "", "view acknowledges completion")
+        self.working()
+        self.until(lambda: bool(self.icon()), "new work detected")
+        frame = self.icon()
+        self.until(lambda: self.icon() != frame, "animation resumes for attached client")
+
+    def test_sessions_created_after_start_share_live_animation(self):
+        self.attach()
+        self.working()
+        self.start_daemon()
+        self.until(lambda: bool(self.icon()), "first session working")
+        pane = self.tmux("new-session", "-d", "-s", "later", "-P", "-F", "#{pane_id}", "sleep 300").strip()
+        self.working(pane)
+        self.until(lambda: bool(self.icon("session", "later")), "new session working")
+        frame = self.icon("session", "later")
+        self.until(lambda: self.icon("session", "later") != frame, "new session uses changing global frame")
+
+    def test_animation_state_is_not_exported_to_new_panes(self):
+        self.working()
+        self.start_daemon()
+        self.until(lambda: bool(self.icon()), "working")
+        pane = self.tmux("new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "test",
+                         'printf "FRAME=%s\\n" "${TMUX_AI_SPINNER_FRAME-unset}"; exec sleep 300').strip()
+        self.until(lambda: "FRAME=" in self.tmux("capture-pane", "-p", "-t", pane), "new pane environment")
+        self.assertIn("FRAME=unset", self.tmux("capture-pane", "-p", "-t", pane))
 
     def test_idle_and_unread_indicators_do_not_continually_redraw(self):
         self.tmux("new-window", "-t", "test", "sleep 300")
@@ -117,6 +175,18 @@ class AttentionTest(unittest.TestCase):
         self.until(lambda: self.icon() == "✓" and self.icon("session") == "✓", "unread attention")
         assert_quiet()
         self.assertEqual(self.sound_count(), 1)
+
+    def test_idle_command_budget_does_not_grow_per_pane(self):
+        for _ in range(19):
+            self.tmux("new-window", "-d", "-t", "test", "sleep 300")
+        self.attach()
+        self.start_daemon()
+        self.until(lambda: "@ai_spinner_s" in self.tmux("show-options", "-t", self.session), "initial display")
+        time.sleep(0.4)
+        before = self.tmux("show-messages").count(" command:")
+        time.sleep(2)
+        commands = self.tmux("show-messages").count(" command:") - before
+        self.assertLessEqual(commands, 18, "idle monitoring must batch snapshots and avoid animation-rate control polling")
 
     def test_completion_stays_visible_and_sounds_once(self):
         self.working()
@@ -161,6 +231,99 @@ class AttentionTest(unittest.TestCase):
         self.tmux("select-window", "-t", self.window)
         self.until(lambda: self.icon() == "" and self.icon("session") == "", "view acknowledges relevant window")
         self.assertEqual(self.sound_count(), 1)
+
+    def delay_tmux_response(self, kind):
+        """Delay one real response, widening a scheduling gap without faking data."""
+        wrapper_dir = self.directory / "wrapper"
+        wrapper_dir.mkdir(exist_ok=True)
+        wrapper = wrapper_dir / "tmux"
+        wrapper.write_text(f"#!{sys.executable}\nREAL = {shutil.which('tmux')!r}\n" + r'''
+import os, pathlib, subprocess, sys, time
+args = sys.argv[1:]
+kind = os.environ.get("TMUX_TEST_GATE_KIND")
+gate = pathlib.Path(os.environ["TMUX_TEST_GATE"])
+used, blocked, release = (gate.with_suffix(s) for s in (".used", ".blocked", ".release"))
+match = (kind == "state" and ("show" in args or "list-panes" in args) and "@ai_attention_state" in " ".join(args)) or (kind == "scan" and "list-panes" in args)
+if not match or used.exists():
+    os.execv(REAL, [REAL, *args])
+result = subprocess.run([REAL, *args], capture_output=True)
+if kind != "state" or result.stdout.strip() == b"quiet2" or b"=quiet2|" in result.stdout:
+    used.touch()
+    blocked.write_bytes(result.stdout)
+    deadline = time.monotonic() + 20
+    while not release.exists() and gate.parent.exists() and time.monotonic() < deadline:
+        time.sleep(.01)
+sys.stdout.buffer.write(result.stdout)
+sys.stderr.buffer.write(result.stderr)
+sys.exit(result.returncode)
+''')
+        wrapper.chmod(0o755)
+        gate = self.directory / "response-gate"
+        release = gate.with_suffix(".release")
+        self.addCleanup(release.touch)
+        env = {"PATH": str(wrapper_dir) + os.pathsep + self.env["PATH"],
+               "TMUX_TEST_GATE": str(gate), "TMUX_TEST_GATE_KIND": kind}
+        return env, gate.with_suffix(".blocked"), release
+
+    def test_reload_during_completion_does_not_duplicate_sound(self):
+        env, blocked, release = self.delay_tmux_response("state")
+        self.working()
+        old = self.start_daemon(env)
+        self.until(lambda: bool(self.icon()), "working")
+        self.stopped()
+        self.until(blocked.exists, "old daemon sampled the last quiet observation", timeout=12)
+        new = self.start_daemon()
+        self.until(lambda: self.tmux("show-options", "-gqv", "@ai_spinner_pid").strip() == str(new.pid), "replacement claims ownership")
+        time.sleep(0.7)
+        release.touch()
+        self.until(lambda: old.poll() is not None and self.sound_count() >= 1, "handover completes", timeout=12)
+        time.sleep(1.3)
+        self.assertEqual(self.sound_count(), 1, "old and new instances must not notify for the same completion")
+        self.assertEqual(self.icon(), "✓")
+        self.assertIsNone(new.poll())
+
+    def test_moving_unread_pane_during_scan_does_not_acknowledge_old_window(self):
+        self.tmux("split-window", "-d", "-t", self.window, "sleep 300")
+        destination = self.tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", "test", "sleep 300").strip()
+        self.working()
+        old = self.start_daemon()
+        self.until(lambda: bool(self.icon()), "working")
+        self.stopped()
+        self.until(lambda: self.icon() == "✓" and self.sound_count() == 1, "unread completion")
+        old.terminate()
+        old.wait(timeout=5)
+        self.attach()
+        env, blocked, release = self.delay_tmux_response("scan")
+        self.start_daemon(env)
+        self.until(blocked.exists, "scan sampled the source window")
+        self.tmux("join-pane", "-d", "-s", self.pane, "-t", destination)
+        release.touch()
+        self.until(lambda: self.icon(target=destination) == "✓", "moved pane retains unread attention", timeout=12)
+        self.assertEqual(self.icon(), "")
+        self.assertEqual(self.icon("session"), "✓")
+        self.assertEqual(self.sound_count(), 1)
+        self.tmux("select-window", "-t", destination)
+        self.until(lambda: self.icon(target=destination) == "" and self.icon("session") == "", "destination view acknowledges attention")
+
+    def test_long_sound_does_not_hold_daemon_handover_lock(self):
+        sound_pid = self.directory / "sound.pid"
+        self.tmux("set-option", "-g", "@ai_attention_command", f"printf '%s' $$ > '{sound_pid}'; exec sleep 30")
+        def stop_sound():
+            if sound_pid.exists():
+                try:
+                    os.kill(int(sound_pid.read_text()), signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+        self.addCleanup(stop_sound)
+        self.working()
+        old = self.start_daemon()
+        self.until(lambda: bool(self.icon()), "working")
+        self.stopped()
+        self.until(lambda: self.icon() == "✓" and sound_pid.exists(), "long sound started")
+        self.start_daemon()
+        self.until(lambda: old.poll() is not None, "old owner exits")
+        self.working()
+        self.until(lambda: bool(self.icon()) and "✓" not in self.icon(), "replacement runs without waiting for sound to finish")
 
     def test_reload_preserves_unread_without_replaying_sound(self):
         self.working()
@@ -355,6 +518,29 @@ class AttentionTest(unittest.TestCase):
         self.until(lambda: bool(self.icon()) and "✓" not in self.icon(), "Pi busy marker above 15 footer rows")
         self.tmux("send-keys", "-t", pane, "Done", "Enter")
         self.until(lambda: self.icon() == "✓" and self.sound_count() == 1, "chat text is not mistaken for activity")
+
+    def test_idle_agent_uses_one_text_filter_per_capture(self):
+        executable = self.directory / "pi"
+        shutil.copy2(shutil.which("sh"), executable)
+        self.tmux("new-window", "-d", "-t", "test",
+                  shlex.join([str(executable), "-c", "printf 'Ready\\n'; while IFS= read -r line; do :; done"]))
+        wrappers = self.directory / "filters"
+        wrappers.mkdir()
+        calls = self.directory / "filter-calls"
+        for name in ("grep", "tail", "awk"):
+            real = shutil.which(name)
+            self.assertIsNotNone(real)
+            wrapper = wrappers / name
+            wrapper.write_text(f"#!/bin/sh\nprintf '%s\\n' {name} >> {shlex.quote(str(calls))}\nexec {shlex.quote(real)} \"$@\"\n")
+            wrapper.chmod(0o755)
+        self.attach()
+        before = self.tmux("show-messages").count("command: capture-pane")
+        self.start_daemon({"PATH": str(wrappers) + os.pathsep + self.env["PATH"]})
+        self.until(lambda: "@ai_spinner_s" in self.tmux("show-options", "-t", self.session), "first scan applied")
+        filters = len(calls.read_text().splitlines())
+        captures = self.tmux("show-messages").count("command: capture-pane") - before
+        self.assertGreaterEqual(captures, 1)
+        self.assertLessEqual(filters, captures, "idle panes must not spawn multiple grep/tail stages per capture")
 
     def test_existing_text_detectors_still_work(self):
         self.start_daemon()

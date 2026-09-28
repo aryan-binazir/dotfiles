@@ -11,9 +11,18 @@
 - **✓ plus spinner:** one pane/window has unread attention while another works.
 
 Window tabs, `prefix s` session and expanded window rows, and `prefix w` use the
-same indicators. The daemon publishes only changed indicators, batching each
-animation frame; stable idle and unread indicators do not force repeated redraws. A session retains its check while any of its windows has unread
-attention; visiting a different window in that session doesn't clear it.
+same indicators. Stable option values refer to a shared hidden environment
+variable for the animation frame; consumers expand them with `#{E:@ai_spinner}`
+or `#{E:@ai_spinner_s}`. Frame updates use status-only refreshes, not option writes
+that invalidate ordinary application panes. Stable idle and unread indicators do
+not force repeated redraws. State/indicator transitions can still trigger tmux's
+normal full redraw. A session retains its check while any of its windows has
+unread attention; visiting a different window in that session doesn't clear it.
+
+Detection runs roughly once a second and animation roughly four times a second.
+Pane state and client metadata are read in bulk, and captured text is filtered in
+one pass. Without terminal clients, detection and notifications continue but
+animation stops. The internal frame is not exported to new pane processes.
 
 ## Acknowledgement and persistence
 
@@ -29,8 +38,14 @@ to each containing session, but their panes are processed only once per scan.
 
 Unread state is stored in pane-local tmux options, so it survives **config reloads
 and daemon restarts while the tmux server lives**. Reloading doesn't replay
-already-issued notifications. Destroying/restarting the tmux server does not
-preserve attention; tmux-resurrect does not restore these options.
+already-issued notifications. On Linux, `flock` (util-linux) serializes daemon
+handover so an in-flight completion cannot race a replacement. Scanner and sound
+children do not hold that lock. Its empty `<socket>.ai-spinner.lock` file is
+intentionally retained to keep concurrent waiters on the same inode. A pane's
+window membership is checked inside tmux when persisting a transition, so moving
+it mid-scan cannot acknowledge its old window. Aggregation can lag until the next
+scan. Destroying/restarting the tmux server does not preserve attention;
+tmux-resurrect does not restore these options.
 
 This is heuristic monitoring, not lifecycle hooks. Very short work between scans
 can be missed; changing an agent's UI wording can break detection. An unrecognized
@@ -76,11 +91,17 @@ git diff --check
 ```
 
 The attention tests create private tmux servers and PTY clients. They exercise
-real detection, indicators, picker rendering, acknowledgement, notifications and
-reloads; they never source the live config or run real AI agents.
+real detection, indicators, picker rendering, acknowledgement, notifications,
+in-flight reload/pane-movement races, status-only animation and bounded polling;
+they never source the live config or run real AI agents. Verified with tmux 3.7c
+and Linux `flock`.
 
-A worktree checkout does **not** update existing Stow links: those still point at
-the primary checkout. Test in an isolated server first. Only after approving and
-applying the change to the Stow source should you reload live tmux with `prefix q`.
-Before live rollout, save copies of the current script and tmux config. Rollback
-means restoring those two files and reloading; no sessions need to be killed.
+A worktree checkout does **not** update existing Stow links: verify their actual
+targets. Test in an isolated server first. Only after approving and applying the
+change to the Stow source should you reload live tmux with `prefix q`. Upgrade the
+script and format consumers together. For the first upgrade from a pre-lock
+daemon, pause it with `tmux set -g @ai_spinner_pid paused`, verify that the old
+daemon has exited, then reload; an old binary does not participate in the new
+handover lock. Before live rollout, save copies of the current script and tmux
+config. Rollback means restoring those two files and reloading; no sessions need
+to be killed.

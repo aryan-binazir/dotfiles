@@ -7,8 +7,6 @@
 socket=$(tmux display-message -p '#{socket_path}') || exit 1
 tmux() { command tmux -S "$socket" "$@"; }
 
-# Replacement instances claim ownership; the previous instance exits on a tick.
-tmux set -g @ai_spinner_pid $$ || exit 1
 f0=⡇ f1=⠏ f2=⠛ f3=⠹ f4=⢸ f5=⣰ f6=⣤ f7=⣆
 b0=$(printf '\342\240') b1=$(printf '\342\241')
 b2=$(printf '\342\242') b3=$(printf '\342\243')
@@ -29,6 +27,13 @@ cleanup() {
 trap cleanup 0
 trap 'exit 0' HUP INT TERM
 
+# A replacement requests handover, then waits until the old owner finishes its
+# in-flight writes/notification. Keep the lock inode: unlinking races waiters.
+exec 9>"$socket.ai-spinner.lock" || exit 1
+command -v flock >/dev/null 2>&1 || exit 1
+tmux set -g @ai_spinner_pid $$ || exit 1
+flock -x 9 || exit 1
+
 scan_panes() {
     pane_rows=$(tmux list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{pane_current_command}|#{pane_title}') || return 1
     while IFS='|' read -r sess win pane cmd title; do
@@ -39,16 +44,19 @@ scan_panes() {
             case $cmd in
             codex* | node | bun | uv | pi | cursor-agent)
                 content=$(tmux capture-pane -p -t "$pane" 2>/dev/null) || { printf '%s|%s|%s|unknown\n' "$sess" "$win" "$pane"; continue; }
-                # Pi's todo/footer widgets can push its busy line above the
-                # last eight rows. Match only its standalone braille+Working
-                # status across the visible pane, not arbitrary chat mentions.
-                # C locale makes '.' consume the third UTF-8 braille byte.
-                if printf '%s\n' "$content" | LC_ALL=C grep -qE "^[[:space:]]*($b0|$b1|$b2|$b3). Working(\.\.\.)?[[:space:]]*$"; then
-                    w=1
-                else
-                    printf '%s\n' "$content" | grep -v '^[[:space:]]*$' | tail -8 |
-                        grep -qE '[Ee]sc to interrupt|[Cc]trl\+[Cc] to stop|(^|[[:space:]])Working(\.\.\.)?([[:space:]]|$)' && w=1
-                fi ;;
+                # One filter handles Pi's standalone status above tall footers
+                # and the legacy last-eight-nonempty-lines detector. C locale
+                # makes '.' consume the third UTF-8 byte of a braille glyph.
+                printf '%s\n' "$content" | LC_ALL=C awk -v braille="$b0|$b1|$b2|$b3" '
+                    BEGIN { pi = "^[[:space:]]*(" braille "). Working([.][.][.])?[[:space:]]*$" }
+                    $0 ~ pi { found = 1 }
+                    NF { recent[n++ % 8] = ($0 ~ /[Ee]sc to interrupt|[Cc]trl[+][Cc] to stop|(^|[[:space:]])Working([.][.][.])?([[:space:]]|$)/) }
+                    END {
+                        if (found) exit 0
+                        for (i in recent) if (recent[i]) exit 0
+                        exit 1
+                    }
+                ' && w=1 ;;
             esac
             ;;
         esac
@@ -66,7 +74,7 @@ start_scan() {
         else
             printf 'failed\n' > "$scan_ready"
         fi
-    ) &
+    ) 9>&- &
     scan_pid=$!
 }
 
@@ -77,30 +85,42 @@ apply_scan() {
         rm -f "$scan_result" "$scan_ready"
         return
     fi
+    # One snapshot avoids a fresh tmux process for every pane on every scan.
+    pane_states=$(tmux list-panes -a -F '|#{pane_id}=#{@ai_attention_state}|') || return
     working="" working_s="" done_w="" done_s=""
     windows=$(tmux list-windows -a -F '#{window_id}' | sort -u)
     sessions=$(tmux list-sessions -F '#{session_id}')
-    clients=$(tmux list-clients -F '#{client_name}' 2>/dev/null)
-    viewed=""
-    client_rows=$(tmux list-clients -F '#{window_id}|#{client_flags}|#{pane_in_mode}' 2>/dev/null)
-    while IFS='|' read -r window flags in_mode; do
+    clients="" viewed=""
+    client_rows=$(tmux list-clients -F '#{client_name}|#{window_id}|#{client_flags}|#{pane_in_mode}' 2>/dev/null)
+    while IFS='|' read -r client window flags in_mode; do
+        [ -n "$client" ] || continue
+        case ",$flags," in *,control-mode,*) continue ;; esac
+        clients="$clients $client"
         # Detached sessions, unfocused terminals, and picker/copy mode aren't
         # evidence that the user has actually looked at the agent's output.
         case ",$flags," in *,focused,*) ;; *) continue ;; esac
-        case ",$flags," in *,control-mode,*) continue ;; esac
         [ "$in_mode" = 0 ] || continue
         viewed="$viewed $window"
     done <<EOF
 $client_rows
 EOF
     notify=0
-    processed=""
+    processed_states=""
     while IFS='|' read -r sess win pane busy; do
         # Pane closure is not completion. Never update a reused/default target.
         case $pane in %*[!0-9]* | % | '') continue ;; %*) ;; *) continue ;; esac
-        previous=$(tmux show -pqv -t "$pane" @ai_attention_state 2>/dev/null) || continue
-        # Linked windows appear once per session; advance their panes only once.
-        case " $processed " in *" $pane "*) busy=unknown ;; *) processed="$processed $pane" ;; esac
+        case $win in @*[!0-9]* | @ | '') continue ;; @*) ;; *) continue ;; esac
+        # Linked windows reuse the state applied earlier in this scan; they
+        # must neither advance debounce again nor aggregate the stale snapshot.
+        case $processed_states in
+        *"|$pane="*) entry=${processed_states#*"|$pane="}; busy=unknown ;;
+        *)
+            case $pane_states in
+            *"|$pane="*) entry=${pane_states#*"|$pane="} ;;
+            *) continue ;;
+            esac ;;
+        esac
+        previous=${entry%%|*}
         state=$previous
         case $busy in
         1) state=working ;;
@@ -119,9 +139,15 @@ EOF
             case " $viewed " in *" $win "*) state="" ;; esac
         fi
         if [ "$state" != "$previous" ]; then
-            tmux set -p -t "$pane" @ai_attention_state "$state" 2>/dev/null || continue
+            # A pane can move after the async sample. Check membership and
+            # persist together in tmux, never acknowledging its old window.
+            applied=$(tmux if-shell -F -t "$pane" "#{==:#{window_id},$win}" \
+                "set-option -p -t $pane @ai_attention_state '$state' ; display-message -p applied" \
+                'display-message -p moved' 2>/dev/null) || continue
+            [ "$applied" = applied ] || continue
             [ "$completed" = 0 ] || notify=1
         fi
+        processed_states="$processed_states|$pane=$state|"
         case $state in
         working | quiet1 | quiet2)
             case " $working " in *" $win "*) ;; *) working="$working $win" ;; esac
@@ -134,7 +160,7 @@ EOF
     if [ "$notify" = 1 ]; then
         sound_command=$(tmux show -gqv @ai_attention_command)
         if [ -n "$sound_command" ]; then
-            sh -c "$sound_command" </dev/null >/dev/null 2>&1 &
+            sh -c "$sound_command" 9>&- </dev/null >/dev/null 2>&1 &
         fi
     fi
     rm -f "$scan_result" "$scan_ready"
@@ -142,24 +168,32 @@ EOF
 
 tick=0
 rendered=";"
+frame_initialized=0
 while :; do
-    [ "$(tmux show -gqv @ai_spinner_pid 2>/dev/null)" = "$$" ] || exit 0
+    if [ $((tick % 4)) -eq 0 ]; then
+        [ "$(tmux show -gqv @ai_spinner_pid 2>/dev/null)" = "$$" ] || exit 0
+    fi
     if [ -f "$scan_ready" ]; then
         apply_scan
     fi
     if [ $((tick % 4)) -eq 0 ]; then
-        tmux has-session 2>/dev/null || exit 0
         [ -n "$scan_pid" ] || start_scan
     fi
     eval "frame=\$f$((tick % 8))"
     set --
+    # Environment updates don't invalidate application panes like set-option.
+    # Indicator options hold a format reference; only the status bar animates.
+    if [ -n "$working" ] && { [ -n "$clients" ] || [ "$frame_initialized" = 0 ]; }; then
+        set -- set-environment -gh TMUX_AI_SPINNER_FRAME "$frame" ';'
+        frame_initialized=1
+    fi
     next_rendered=";"
     # Even identical user-option writes can request full-client redraws. Only
     # publish changes, and queue a complete frame in one tmux command batch.
     for wnd in $windows; do
         icon=""
         case " $done_w " in *" $wnd "*) icon=" ✓" ;; esac
-        case " $working " in *" $wnd "*) icon="$icon $frame" ;; esac
+        case " $working " in *" $wnd "*) icon="$icon #{TMUX_AI_SPINNER_FRAME}" ;; esac
         key="w:$wnd=$icon;"
         next_rendered="$next_rendered$key"
         case $rendered in *";$key"*) ;; *)
@@ -169,7 +203,7 @@ while :; do
     for sess in $sessions; do
         icon=""
         case " $done_s " in *" $sess "*) icon="✓" ;; esac
-        case " $working_s " in *" $sess "*) icon="${icon:+$icon }$frame" ;; esac
+        case " $working_s " in *" $sess "*) icon="${icon:+$icon }#{TMUX_AI_SPINNER_FRAME}" ;; esac
         key="s:$sess=$icon;"
         next_rendered="$next_rendered$key"
         case $rendered in *";$key"*) ;; *)
