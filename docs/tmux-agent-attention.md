@@ -11,7 +11,8 @@
 - **✓ plus spinner:** one pane/window has unread attention while another works.
 
 Window tabs, `prefix s` session and expanded window rows, and `prefix w` use the
-same indicators. A session retains its check while any of its windows has unread
+same indicators. The daemon publishes only changed indicators, batching each
+animation frame; stable idle and unread indicators do not force repeated redraws. A session retains its check while any of its windows has unread
 attention; visiting a different window in that session doesn't clear it.
 
 ## Acknowledgement and persistence

@@ -90,6 +90,34 @@ class AttentionTest(unittest.TestCase):
     def sound_count(self):
         return len(self.sounds.read_text().splitlines()) if self.sounds.exists() else 0
 
+    def test_idle_and_unread_indicators_do_not_continually_redraw(self):
+        self.tmux("new-window", "-t", "test", "sleep 300")
+        self.attach()
+        self.tmux("set-option", "-g", "status-interval", "0")
+        self.start_daemon()
+        self.until(lambda: "@ai_spinner_s" in self.tmux("show-options", "-t", self.session), "initial display published")
+
+        def updates():
+            messages = self.tmux("show-messages")
+            return (messages.count("command: refresh-client -S"),
+                    messages.count(" @ai_spinner "), messages.count(" @ai_spinner_s "))
+
+        def assert_quiet():
+            time.sleep(0.4)
+            before = updates()
+            time.sleep(1.3)
+            self.assertEqual(updates(), before, "unchanged indicators must not trigger option writes or forced redraws")
+
+        assert_quiet()
+        self.working()
+        self.until(lambda: bool(self.icon()), "working still animates")
+        frame = self.icon()
+        self.until(lambda: self.icon() != frame, "animation advances")
+        self.stopped()
+        self.until(lambda: self.icon() == "✓" and self.icon("session") == "✓", "unread attention")
+        assert_quiet()
+        self.assertEqual(self.sound_count(), 1)
+
     def test_completion_stays_visible_and_sounds_once(self):
         self.working()
         self.start_daemon()

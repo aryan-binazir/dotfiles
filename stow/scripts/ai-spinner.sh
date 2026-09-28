@@ -141,6 +141,7 @@ EOF
 }
 
 tick=0
+rendered=";"
 while :; do
     [ "$(tmux show -gqv @ai_spinner_pid 2>/dev/null)" = "$$" ] || exit 0
     if [ -f "$scan_ready" ]; then
@@ -151,21 +152,42 @@ while :; do
         [ -n "$scan_pid" ] || start_scan
     fi
     eval "frame=\$f$((tick % 8))"
+    set --
+    next_rendered=";"
+    # Even identical user-option writes can request full-client redraws. Only
+    # publish changes, and queue a complete frame in one tmux command batch.
     for wnd in $windows; do
         icon=""
         case " $done_w " in *" $wnd "*) icon=" ✓" ;; esac
         case " $working " in *" $wnd "*) icon="$icon $frame" ;; esac
-        tmux set -w -t "$wnd" @ai_spinner "$icon" 2>/dev/null
+        key="w:$wnd=$icon;"
+        next_rendered="$next_rendered$key"
+        case $rendered in *";$key"*) ;; *)
+            set -- "$@" set-option -w -t "$wnd" @ai_spinner "$icon" ';' ;;
+        esac
     done
     for sess in $sessions; do
         icon=""
         case " $done_s " in *" $sess "*) icon="✓" ;; esac
         case " $working_s " in *" $sess "*) icon="${icon:+$icon }$frame" ;; esac
-        tmux set -t "$sess" @ai_spinner_s "$icon" 2>/dev/null
+        key="s:$sess=$icon;"
+        next_rendered="$next_rendered$key"
+        case $rendered in *";$key"*) ;; *)
+            set -- "$@" set-option -t "$sess" @ai_spinner_s "$icon" ';' ;;
+        esac
     done
-    for client in $clients; do
-        tmux refresh-client -S -t "$client" 2>/dev/null
-    done
+    if [ "$#" -gt 0 ]; then
+        for client in $clients; do
+            set -- "$@" refresh-client -S -t "$client" ';'
+        done
+        if tmux "$@" 2>/dev/null; then
+            rendered=$next_rendered
+        else
+            rendered=";"
+        fi
+    else
+        rendered=$next_rendered
+    fi
     tick=$((tick + 1))
     sleep 0.25
 done
