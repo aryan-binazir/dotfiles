@@ -42,15 +42,20 @@ scan_panes() {
         "$b0"* | "$b1"* | "$b2"* | "$b3"*) w=1 ;;
         *)
             case $cmd in
-            codex* | node | bun | uv | pi | cursor-agent)
+            codex* | node | bun | uv | pi | cursor-agent | claude | [0-9]*.[0-9]*.[0-9]*)
                 content=$(tmux capture-pane -p -t "$pane" 2>/dev/null) || { printf '%s|%s|%s|unknown\n' "$sess" "$win" "$pane"; continue; }
                 # One filter handles Pi's standalone status above tall footers
                 # and the legacy last-eight-nonempty-lines detector. C locale
                 # makes '.' consume the third UTF-8 byte of a braille glyph.
-                printf '%s\n' "$content" | LC_ALL=C awk -v braille="$b0|$b1|$b2|$b3" '
-                    BEGIN { pi = "^[[:space:]]*(" braille "). Working([.][.][.])?[[:space:]]*$" }
-                    $0 ~ pi { found = 1 }
-                    NF { recent[n++ % 8] = ($0 ~ /[Ee]sc to interrupt|[Cc]trl[+][Cc] to stop|(^|[[:space:]])Working([.][.][.])?([[:space:]]|$)/) }
+                printf '%s\n' "$content" | LC_ALL=C awk -v braille="$b0|$b1|$b2|$b3" -v command="$cmd" '
+                    BEGIN {
+                        pi = "^[[:space:]]*(" braille "). Working([.][.][.])?[[:space:]]*$"
+                        native = (command ~ /^(claude|[0-9]+[.][0-9]+[.][0-9]+)$/)
+                        claude = (native || command == "node" || command == "bun")
+                    }
+                    claude && /^(·|✢|✳|✶|✻|✽|[*]) [A-Za-z]+…([[:space:]]+[(][0-9]+[smh]([[:space:]]|[)])|[[:space:]]*$)/ { found = 1 }
+                    !native && $0 ~ pi { found = 1 }
+                    !native && NF { recent[n++ % 8] = ($0 ~ /[Ee]sc to interrupt|[Cc]trl[+][Cc] to stop|(^|[[:space:]])Working([.][.][.])?([[:space:]]|$)/) }
                     END {
                         if (found) exit 0
                         for (i in recent) if (recent[i]) exit 0

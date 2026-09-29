@@ -542,6 +542,53 @@ sys.exit(result.returncode)
         self.assertGreaterEqual(captures, 1)
         self.assertLessEqual(filters, captures, "idle panes must not spawn multiple grep/tail stages per capture")
 
+    def test_claude_footer_detects_native_and_named_commands(self):
+        self.start_daemon()
+        cases = (("2.1.284", "·"), ("claude", "✢"), ("node", "✳"), ("bun", "✶"),
+                 ("2.1.284", "✻"), ("2.1.284", "✽"), ("2.1.284", "*"))
+        for name, glyph in cases:
+            with self.subTest(command=name):
+                executable = self.directory / name
+                shutil.copy2(shutil.which("sh"), executable)
+                body = "while IFS= read -r line; do printf '\\033[2J\\033[H%s\\n' \"$line\"; done"
+                pane = self.tmux("new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "test",
+                                 shlex.join([str(executable), "-c", body])).strip()
+                self.tmux("select-pane", "-t", pane, "-T", "✳ Claude")
+                self.until(lambda: self.tmux("display-message", "-p", "-t", pane,
+                                            "#{pane_current_command}").strip() == name, "native foreground command")
+                self.tmux("send-keys", "-t", pane, f"{glyph} Cogitating… (37s · ↓ 1.8k tokens)", "Enter")
+                self.until(lambda: self.tmux("display-message", "-p", "-t", pane,
+                                            "#{@ai_attention_state}").strip() == "working", "Claude working")
+                self.assertNotIn("✓", self.icon(target=pane))
+                self.assertTrue(self.icon("session"))
+                self.tmux("send-keys", "-t", pane, "✻ Worked for 37s", "Enter")
+                self.until(lambda: self.icon(target=pane) == "✓" and self.icon("session") == "✓",
+                           "Claude completion at both scopes")
+                self.tmux("kill-pane", "-t", pane)
+                self.until(lambda: self.icon("session") == "", "closed Claude cleared")
+
+    def test_claude_footer_ignores_prose_prompts_and_indented_transcripts(self):
+        executable = self.directory / "2.1.284"
+        shutil.copy2(shutil.which("sh"), executable)
+        idle = "\n".join((
+            "Ordinary prose… (with parentheses)",
+            "  ✶ Cogitating… (37s · ↓ 1.8k tokens)",
+            "❯ ✶ Cogitating… (37s · ↓ 1.8k tokens)",
+            "✻ Worked for 37s",
+            "✶ This is ordinary text… (with parentheses)",
+            "✶ Example… (ordinary prose)",
+            "  Working on the explanation… (not a status)",
+            "❯ Working...",
+        ))
+        body = "printf '%s\\n' " + shlex.quote(idle) + "; while IFS= read -r line; do :; done"
+        self.tmux("respawn-pane", "-k", "-t", self.pane, shlex.join([str(executable), "-c", body]))
+        self.start_daemon()
+        self.until(lambda: "@ai_spinner_s" in self.tmux("show-options", "-t", self.session), "first scan")
+        time.sleep(3)
+        self.assertEqual(self.icon(), "")
+        self.assertEqual(self.icon("session"), "")
+        self.assertEqual(self.sound_count(), 0)
+
     def test_existing_text_detectors_still_work(self):
         self.start_daemon()
         for name, text in (("pi", "Working..."), ("codex", "esc to interrupt"), ("node", "ctrl+c to stop"), ("cursor-agent", "ctrl+c to stop")):
