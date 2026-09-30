@@ -30,7 +30,6 @@ cleanup() {
 trap cleanup 0
 trap 'exit 0' HUP INT TERM
 
-# Keep fd 9 across exec; notification, scanner, and sound children close it.
 if [ "${1-}" != --locked ]; then
     exec 9>"$socket.ai-spinner.lock" || exit 1
     if command -v flock >/dev/null 2>&1; then
