@@ -50,6 +50,13 @@ def clients(tmux, socket, session):
     return [row for row in parsed if len(row) == 5 and row[3] == session]
 
 
+def client_identity_matches(client):
+    condition = "1"
+    for name, expected in zip(("client_name", "client_pid", "client_created", "session_id", "client_termname"), client):
+        condition = f"#{{&&:{condition},#{{==:#{{{name}}},{expected}}}}}"
+    return f"#{{==:#{{L:#{{?{condition},1,}}}},1}}"
+
+
 def click_target(socket, pane, expected_event):
     tmux = shutil.which("tmux")
     pid, session, linked, event = run(tmux, "-S", socket, "display-message", "-p", "-t", pane,
@@ -57,7 +64,10 @@ def click_target(socket, pane, expected_event):
     attached = clients(tmux, socket, session)
     if len(attached) != 1 or linked != "0" or attached[0][4] != "xterm-ghostty" or (expected_event is not None and event != expected_event):
         return None
-    terminal = run("osascript", "-", attached[0][0], input=LOOKUP_TERMINAL)
+    if run(tmux, "-S", socket, "display-message", "-p", "-t", pane,
+           client_identity_matches(attached[0])) != "1":
+        return None
+    terminal = run("osascript", "-", attached[0][0], input=LOOKUP_TERMINAL, timeout=None)
     if not terminal or "\n" in terminal:
         return None
     return {"socket": socket, "server": run(tmux, "-S", socket, "display-message", "-p", "#{pid}"),
@@ -83,9 +93,9 @@ def click(target):
     condition = "#{||:#{==:#{@ai_attention_state},done},#{==:#{@ai_attention_state},}}"
     for name, expected in (("session_attached", "1"), ("pid", target["server"]), ("pane_pid", pid),
                            ("session_id", session), ("window_id", window), ("window_linked", "0"),
-                           ("@ai_attention_event", event), ("client_pid", target["client"][1]),
-                           ("client_created", target["client"][2])):
+                           ("@ai_attention_event", event)):
         condition = f"#{{&&:{condition},#{{==:#{{{name}}},{expected}}}}}"
+    condition = f"#{{&&:{condition},{client_identity_matches(target['client'])}}}"
     command = f"switch-client -c {shlex.quote(target['client'][0])} -t {target['session']}:{window} ; select-pane -t {pane}"
     run(tmux, "-S", socket, "if-shell", "-F", "-t", pane, condition, command)
 
@@ -115,7 +125,7 @@ def notify(socket, pane, event=None):
             if target:
                 callback = shlex.join([sys.executable, str(Path(__file__).resolve()), "click", json.dumps(target)])
                 args.extend(["-execute", callback])
-            run(*args)
+            run(*args, timeout=None)
         else:
             run("osascript", "-", "Agent needs attention", label,
                 input='on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv)\nend run')

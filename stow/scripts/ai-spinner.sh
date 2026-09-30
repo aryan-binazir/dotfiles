@@ -7,29 +7,17 @@
 socket=$(tmux display-message -p '#{socket_path}') || exit 1
 tmux() { command tmux -S "$socket" "$@"; }
 
-# Keep fd 9 across exec; notification, scanner, and sound children close it.
-if [ "${1-}" != --locked ]; then
-    exec 9>"$socket.ai-spinner.lock" || exit 1
-    tmux set -g @ai_spinner_pid $$ || exit 1
-    if command -v flock >/dev/null 2>&1; then
-        flock -x 9 || exit 1
-    else
-        exec python3 -c 'import fcntl, os, sys; fcntl.flock(9, fcntl.LOCK_EX); os.set_inheritable(9, True); os.execv("/bin/sh", ["sh", sys.argv[1], "--locked"])' "$0"
-    fi
+if [ "${1-}" != --locked ] && ! command -v flock >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
+    exit 1
 fi
-
-f0=⡇ f1=⠏ f2=⠛ f3=⠹ f4=⢸ f5=⣰ f6=⣤ f7=⣆
-b0=$(printf '\342\240') b1=$(printf '\342\241')
-b2=$(printf '\342\242') b3=$(printf '\342\243')
-working="" working_s="" done_w="" done_s="" windows="" sessions="" clients=""
-scan_dir=$(mktemp -d "${TMPDIR:-/tmp}/ai-spinner.XXXXXX") || exit 1
+if [ "${1-}" = --locked ]; then
+    scan_dir=$2
+else
+    scan_dir=$(mktemp -d "${TMPDIR:-/tmp}/ai-spinner.XXXXXX") || exit 1
+fi
 scan_result="$scan_dir/result"
 scan_ready="$scan_dir/ready"
 scan_pid=""
-notify_script=""
-if command -v python3 >/dev/null 2>&1; then
-    notify_script=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().with_name("tmux-agent-notify"))' "$0")
-fi
 
 cleanup() {
     if [ -n "$scan_pid" ]; then
@@ -41,6 +29,34 @@ cleanup() {
 }
 trap cleanup 0
 trap 'exit 0' HUP INT TERM
+
+# Keep fd 9 across exec; notification, scanner, and sound children close it.
+if [ "${1-}" != --locked ]; then
+    exec 9>"$socket.ai-spinner.lock" || exit 1
+    if command -v flock >/dev/null 2>&1; then
+        tmux set -g @ai_spinner_pid $$ || exit 1
+        flock -x 9 || exit 1
+    else
+        exec python3 -c 'import fcntl, os, subprocess, sys
+try:
+    subprocess.run(["tmux", "-S", sys.argv[2], "set", "-g", "@ai_spinner_pid", str(os.getpid())], check=True)
+    fcntl.flock(9, fcntl.LOCK_EX)
+    os.set_inheritable(9, True)
+    os.execv("/bin/sh", ["sh", sys.argv[1], "--locked", sys.argv[3]])
+except BaseException:
+    os.rmdir(sys.argv[3])
+    raise' "$0" "$socket" "$scan_dir" || exit 1
+    fi
+fi
+
+f0=⡇ f1=⠏ f2=⠛ f3=⠹ f4=⢸ f5=⣰ f6=⣤ f7=⣆
+b0=$(printf '\342\240') b1=$(printf '\342\241')
+b2=$(printf '\342\242') b3=$(printf '\342\243')
+working="" working_s="" done_w="" done_s="" windows="" sessions="" clients=""
+notify_script=""
+if command -v python3 >/dev/null 2>&1; then
+    notify_script=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().with_name("tmux-agent-notify"))' "$0")
+fi
 
 scan_panes() {
     pane_rows=$(tmux list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{pane_current_command}|#{pane_title}') || return 1

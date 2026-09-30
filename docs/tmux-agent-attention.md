@@ -42,7 +42,9 @@ already-issued notifications. On Linux, `flock` (util-linux) serializes daemon
 handover so an in-flight completion cannot race a replacement. If the `flock`
 executable is unavailable, Python 3 takes the lock and replaces itself with the
 daemon, retaining its PID and lock descriptor. Scanner, sound, and notification
-children do not hold that lock. Its empty `<socket>.ai-spinner.lock` file is
+children do not hold that lock. A replacement prepares its scan directory and
+checks lock support before requesting handover; a failed preparation leaves the
+running monitor in place. Its empty `<socket>.ai-spinner.lock` file is
 intentionally retained to keep concurrent waiters on the same inode. A pane's
 window membership is checked inside tmux when persisting a transition, so moving
 it mid-scan cannot acknowledge its old window. Aggregation can lag until the next
@@ -67,7 +69,9 @@ rewrite. The optional `stow/scripts/tmux-agent-notify` helper uses Python 3's
 standard library. It resolves beside the spinner's real source, including when
 the installed spinner is a Stow symlink. Missing Python on Linux, a missing helper,
 failed notification commands, and unsupported platforms leave existing monitoring
-and sound behavior intact. Each OS command has a five-second timeout.
+and sound behavior intact. Immediate OS commands have a five-second timeout. Ghostty tty lookup and
+`terminal-notifier` delivery can wait for macOS permission dialogs in their
+background worker without blocking the monitor or holding its handover lock.
 
 | Platform | Delivery | Click navigation |
 | --- | --- | --- |
@@ -86,8 +90,10 @@ A supported click focuses the matched Ghostty terminal and selects the exact tmu
 pane. It rechecks the server, completion identity, client attachment, live pane
 membership, and Ghostty terminal before navigating. Old notifications cannot
 navigate to a later completion or a closed pane. A moved pane is followed only
-within its original session. If another client joins or Ghostty cannot focus the
-matched terminal, the click does nothing. Attention clears through the normal
+within its original session. If another client is already attached or Ghostty cannot focus the
+matched terminal, the click does nothing. If a client attaches while Ghostty is
+being focused, tmux navigation is refused; the intended terminal may already have
+been raised. Attention clears through the normal
 focused-window rule, not directly from the callback.
 
 Disable only popups:
