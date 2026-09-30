@@ -114,6 +114,11 @@ if name == "osascript":
         if sys.argv[-1] == os.environ.get("AI_TEST_TERMINAL_ID"):
             print("focused")
     elif "tty of" in script:
+        if os.environ.get("AI_TEST_LOOKUP_GATE"):
+            gate = pathlib.Path(os.environ["AI_TEST_LOOKUP_GATE"])
+            gate.with_suffix(".started").touch()
+            while not gate.exists():
+                time.sleep(0.02)
         print(os.environ.get("AI_TEST_TERMINAL_ID", ""))
         sys.exit(int(os.environ.get("AI_TEST_LOOKUP_EXIT", "0")))
 if os.environ.get("AI_TEST_BACKEND_DELAY"):
@@ -238,6 +243,37 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         callback = self.mac_notification_callback({"AI_TEST_PERMISSION_DELAY": "6"}, timeout=20)
         subprocess.run(["sh", "-c", callback], env=self.env, check=True, timeout=10)
         self.assertEqual(self.tmux("list-clients", "-F", "#{pane_id}").strip(), self.pane)
+
+    def test_mac_lookup_rechecks_attention_event_and_mute_before_delivery(self):
+        env = self.notification_tools("Darwin")
+        env["AI_TEST_TERMINAL_ID"] = "ghostty-terminal-123"
+        self.env.update(env)
+        self.env["TERM"] = "xterm-ghostty"
+        self.tmux("new-window", "-t", "test", "-n", "viewed", "sleep 300")
+        self.attach()
+        for change in ("working", "acknowledged", "event", "muted"):
+            with self.subTest(change=change):
+                gate = self.directory / change
+                self.notifications.write_text("")
+                self.addCleanup(gate.touch)
+                self.tmux("set-option", "-p", "-t", self.pane, "@ai_attention_state", "done")
+                self.tmux("set-option", "-p", "-t", self.pane, "@ai_attention_event", "test:1")
+                self.tmux("set-option", "-g", "@ai_notifications", "on")
+                helper = subprocess.Popen([sys.executable, str(ROOT / "stow/scripts/tmux-agent-notify"),
+                    "notify", "--socket", self.socket, "--pane", self.pane, "--event", "test:1"],
+                    env={**self.env, "AI_TEST_LOOKUP_GATE": str(gate)})
+                self.processes.append(helper)
+                self.until(lambda: gate.with_suffix(".started").exists(), "lookup waiting")
+                if change == "muted":
+                    self.tmux("set-option", "-g", "@ai_notifications", "off")
+                elif change == "event":
+                    self.tmux("set-option", "-p", "-t", self.pane, "@ai_attention_event", "test:2")
+                else:
+                    state = "working" if change == "working" else ""
+                    self.tmux("set-option", "-p", "-t", self.pane, "@ai_attention_state", state)
+                gate.touch()
+                self.assertEqual(helper.wait(timeout=5), 0)
+                self.assertFalse(any(row["tool"] == "terminal-notifier" for row in self.notification_records()))
 
     def test_failed_replacement_preparation_preserves_the_running_daemon(self):
         self.working()

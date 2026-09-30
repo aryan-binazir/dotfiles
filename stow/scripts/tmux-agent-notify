@@ -11,6 +11,9 @@ import subprocess
 import sys
 
 
+CLIENT_FIELDS = ("client_name", "client_pid", "client_created", "session_id", "client_termname")
+
+
 LOOKUP_TERMINAL = '''on run argv
     if application "Ghostty" is not running then return ""
     tell application "Ghostty"
@@ -45,15 +48,16 @@ def run(*args, input=None, timeout=5):
 
 def clients(tmux, socket, session):
     rows = run(tmux, "-S", socket, "list-clients", "-F",
-               "#{client_name}\t#{client_pid}\t#{client_created}\t#{session_id}\t#{client_termname}")
-    parsed = (row.split("\t") for row in rows.splitlines())
-    return [row for row in parsed if len(row) == 5 and row[3] == session]
+               "\t".join(f"#{{{name}}}" for name in CLIENT_FIELDS))
+    fields = (row.split("\t") for row in rows.splitlines())
+    parsed = (dict(zip(CLIENT_FIELDS, row)) for row in fields if len(row) == len(CLIENT_FIELDS))
+    return [client for client in parsed if client["session_id"] == session]
 
 
 def client_identity_matches(client):
     condition = "1"
-    for name, expected in zip(("client_name", "client_pid", "client_created", "session_id", "client_termname"), client):
-        condition = f"#{{&&:{condition},#{{==:#{{{name}}},{expected}}}}}"
+    for name in CLIENT_FIELDS:
+        condition = f"#{{&&:{condition},#{{==:#{{{name}}},{client[name]}}}}}"
     return f"#{{==:#{{L:#{{?{condition},1,}}}},1}}"
 
 
@@ -62,12 +66,12 @@ def click_target(socket, pane, expected_event):
     pid, session, linked, event = run(tmux, "-S", socket, "display-message", "-p", "-t", pane,
                                       "#{pane_pid} #{session_id} #{window_linked} #{@ai_attention_event}").split()
     attached = clients(tmux, socket, session)
-    if len(attached) != 1 or linked != "0" or attached[0][4] != "xterm-ghostty" or (expected_event is not None and event != expected_event):
+    if len(attached) != 1 or linked != "0" or attached[0]["client_termname"] != "xterm-ghostty" or (expected_event is not None and event != expected_event):
         return None
     if run(tmux, "-S", socket, "display-message", "-p", "-t", pane,
            client_identity_matches(attached[0])) != "1":
         return None
-    terminal = run("osascript", "-", attached[0][0], input=LOOKUP_TERMINAL, timeout=None)
+    terminal = run("osascript", "-", attached[0]["client_name"], input=LOOKUP_TERMINAL, timeout=None)
     if not terminal or "\n" in terminal:
         return None
     return {"socket": socket, "server": run(tmux, "-S", socket, "display-message", "-p", "#{pid}"),
@@ -88,7 +92,7 @@ def click(target):
     if (pid != target["pane_pid"] or state not in ("", "done") or event != target["event"]
             or session != target["session"] or linked != "0"):
         return
-    if run(target["osascript"], "-", target["client"][0], target["terminal"], input=FOCUS_TERMINAL) != "focused":
+    if run(target["osascript"], "-", target["client"]["client_name"], target["terminal"], input=FOCUS_TERMINAL) != "focused":
         return
     condition = "#{||:#{==:#{@ai_attention_state},done},#{==:#{@ai_attention_state},}}"
     for name, expected in (("session_attached", "1"), ("pid", target["server"]), ("pane_pid", pid),
@@ -96,16 +100,19 @@ def click(target):
                            ("@ai_attention_event", event)):
         condition = f"#{{&&:{condition},#{{==:#{{{name}}},{expected}}}}}"
     condition = f"#{{&&:{condition},{client_identity_matches(target['client'])}}}"
-    command = f"switch-client -c {shlex.quote(target['client'][0])} -t {target['session']}:{window} ; select-pane -t {pane}"
+    command = f"switch-client -c {shlex.quote(target['client']['client_name'])} -t {target['session']}:{window} ; select-pane -t {pane}"
     run(tmux, "-S", socket, "if-shell", "-F", "-t", pane, condition, command)
 
 
+def pending_attention(socket, pane, event):
+    state, current_event = run("tmux", "-S", socket, "display-message", "-p", "-t", pane,
+                               "#{@ai_attention_state}|#{@ai_attention_event}").split("|")
+    return (state == "done" and (event is None or current_event == event)
+            and run("tmux", "-S", socket, "show-options", "-gqv", "@ai_notifications") != "off")
+
+
 def notify(socket, pane, event=None):
-    if run("tmux", "-S", socket, "display-message", "-p", "-t", pane,
-           "#{@ai_attention_state}") != "done":
-        return
-    if event is not None and run("tmux", "-S", socket, "display-message", "-p", "-t", pane,
-                                 "#{@ai_attention_event}") != event:
+    if not pending_attention(socket, pane, event):
         return
     label = run("tmux", "-S", socket, "display-message", "-p", "-t", pane,
                 "Session #{session_name}, window #{window_name}, pane #{pane_index}")
@@ -121,6 +128,8 @@ def notify(socket, pane, event=None):
                 target = click_target(socket, pane, event)
             except (OSError, ValueError, subprocess.SubprocessError):
                 pass
+            if not pending_attention(socket, pane, target["event"] if target else event):
+                return
             args = ["terminal-notifier", "-title", "Agent needs attention", "-message", label]
             if target:
                 callback = shlex.join([sys.executable, str(Path(__file__).resolve()), "click", json.dumps(target)])

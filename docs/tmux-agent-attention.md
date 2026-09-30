@@ -72,6 +72,8 @@ failed notification commands, and unsupported platforms leave existing monitorin
 and sound behavior intact. Immediate OS commands have a five-second timeout. Ghostty tty lookup and
 `terminal-notifier` delivery can wait for macOS permission dialogs in their
 background worker without blocking the monitor or holding its handover lock.
+After tty lookup, the worker rechecks the completion and popup mute before
+delivery; resumed or acknowledged work and superseded events are suppressed.
 
 | Platform | Delivery | Click navigation |
 | --- | --- | --- |
