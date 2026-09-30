@@ -69,10 +69,11 @@ stow -t ~ sway waybar ghostty kanshi
 
 ### tmux agent attention
 
-The existing agent spinner also shows persistent unread checks and plays a
-completion sound. See [behavior, sound controls, and safe rollout](docs/tmux-agent-attention.md).
+The agent spinner shows persistent unread checks, plays a completion sound, and
+can send background desktop notifications on Linux and macOS. Ghostty pane
+navigation is automatic where exact targeting is supported; other cases stay
+informational. See [behavior, controls, and safe rollout](docs/tmux-agent-attention.md).
 
 ### Separate Configs
 
 My Neovim config: https://github.com/aryan-binazir/neovim-config
-

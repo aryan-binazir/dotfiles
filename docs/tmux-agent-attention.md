@@ -39,7 +39,9 @@ to each containing session, but their panes are processed only once per scan.
 Unread state is stored in pane-local tmux options, so it survives **config reloads
 and daemon restarts while the tmux server lives**. Reloading doesn't replay
 already-issued notifications. On Linux, `flock` (util-linux) serializes daemon
-handover so an in-flight completion cannot race a replacement. Scanner and sound
+handover so an in-flight completion cannot race a replacement. If the `flock`
+executable is unavailable, Python 3 takes the lock and replaces itself with the
+daemon, retaining its PID and lock descriptor. Scanner, sound, and notification
 children do not hold that lock. Its empty `<socket>.ai-spinner.lock` file is
 intentionally retained to keep concurrent waiters on the same inode. A pane's
 window membership is checked inside tmux when persisting a transition, so moving
@@ -51,6 +53,57 @@ This is heuristic monitoring, not lifecycle hooks. Very short work between scans
 can be missed; changing an agent's UI wording can break detection. An unrecognized
 idle agent does not get marked done just because the monitor starts. Failed
 captures don't advance completion detection.
+
+## Desktop notifications
+
+Each newly quiet background pane can show an OS notification saying **Agent needs
+attention**, labeled with its session, window, and pane number. The existing
+window-level acknowledgement rule suppresses popups for windows you are already
+viewing. Popups do not add another sound. Simultaneous panes notify separately;
+their existing sound stays coalesced. Dismissing a popup does not clear its check.
+
+Notifications are automatic. There is no binding shortcut or terminal-title
+rewrite. The optional `stow/scripts/tmux-agent-notify` helper uses Python 3's
+standard library. It resolves beside the spinner's real source, including when
+the installed spinner is a Stow symlink. Missing Python on Linux, a missing helper,
+failed notification commands, and unsupported platforms leave existing monitoring
+and sound behavior intact. Each OS command has a five-second timeout.
+
+| Platform | Delivery | Click navigation |
+| --- | --- | --- |
+| Linux | `notify-send`, including from non-Ghostty terminals | Informational only. Ghostty 1.3.1 does not provide reliable external window/tab targeting. |
+| macOS with `terminal-notifier` | Native notification | Available only when Ghostty exposes terminal tty lookup and exactly one terminal matches the sole tmux client attached to that session. |
+| macOS without `terminal-notifier` | `osascript display notification` | Informational only. |
+
+Ghostty 1.3.1's macOS AppleScript dictionary lacks tty lookup. Newer builds may
+provide it; the helper probes the running API rather than relying on a version
+number. Unsupported APIs, non-Ghostty clients, shared sessions, linked windows,
+and ambiguous matches receive an informational popup without an activation action.
+No notification helper is installed automatically. On macOS, notification and
+Ghostty Automation permissions are controlled by the OS.
+
+A supported click focuses the matched Ghostty terminal and selects the exact tmux
+pane. It rechecks the server, completion identity, client attachment, live pane
+membership, and Ghostty terminal before navigating. Old notifications cannot
+navigate to a later completion or a closed pane. A moved pane is followed only
+within its original session. If another client joins or Ghostty cannot focus the
+matched terminal, the click does nothing. Attention clears through the normal
+focused-window rule, not directly from the callback.
+
+Disable only popups:
+
+```sh
+tmux set -g @ai_notifications off
+```
+
+Restore them:
+
+```sh
+tmux set -g @ai_notifications on
+```
+
+The config defaults to `on` with `set -qog`, preserving runtime overrides across
+reloads. Sound has its separate control below.
 
 ## Sound
 
@@ -87,6 +140,7 @@ command immediately, use `set -g` as above rather than only editing the default.
 ```sh
 python3 -m unittest discover -s tests -v
 sh -n stow/scripts/ai-spinner.sh
+python3 -c 'from pathlib import Path; p = Path("stow/scripts/tmux-agent-notify"); compile(p.read_text(), str(p), "exec")'
 git diff --check
 ```
 
@@ -94,7 +148,19 @@ The attention tests create private tmux servers and PTY clients. They exercise
 real detection, indicators, picker rendering, acknowledgement, notifications,
 in-flight reload/pane-movement races, status-only animation and bounded polling;
 they never source the live config or run real AI agents. Verified with tmux 3.7c
-and Linux `flock`.
+and Linux `flock`. Notification tests record OS command boundaries and execute
+captured callbacks against real private tmux servers; they do not show live
+desktop popups. macOS command paths and the no-`flock` fallback are exercised on
+Linux with controlled tool fixtures. Actual macOS desktop delivery, AppleScript
+compilation/permissions, and click focus are **NOT VERIFIED on this Linux host**.
+
+For a Mac smoke check, use a private tmux socket in Ghostty with these scripts.
+Run synthetic work in a background window, then confirm one native popup and an
+unread check. Verify informational behavior on Ghostty 1.3.1; on a build with tty
+lookup and `terminal-notifier`, click and confirm the exact window/tab and pane.
+Repeat with two clients sharing the session and with the target pane closed;
+those cases must not navigate. Disable popups and confirm the check still works.
+Stop that private server when finished.
 
 A worktree checkout does **not** update existing Stow links: verify their actual
 targets. Test in an isolated server first. Only after approving and applying the
