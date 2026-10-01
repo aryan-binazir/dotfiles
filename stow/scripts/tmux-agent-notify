@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Desktop notifications for tmux agent attention."""
+
+import argparse
+import html
+import json
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+
+
+CLIENT_FIELDS = ("client_name", "client_pid", "client_created", "session_id", "client_termname")
+
+
+LOOKUP_TERMINAL = '''on run argv
+    if application "Ghostty" is not running then return ""
+    tell application "Ghostty"
+        set matches to {}
+        repeat with candidate in terminals
+            if (tty of candidate as text) is (item 1 of argv) then set end of matches to candidate
+        end repeat
+        if (count of matches) is 1 then return id of item 1 of matches
+    end tell
+    return ""
+end run'''
+
+FOCUS_TERMINAL = '''on run argv
+    if application "Ghostty" is not running then return ""
+    tell application "Ghostty"
+        set matches to {}
+        repeat with candidate in terminals
+            if (tty of candidate as text) is (item 1 of argv) and (id of candidate as text) is (item 2 of argv) then set end of matches to candidate
+        end repeat
+        if (count of matches) is not 1 then return ""
+        set targetTerminal to item 1 of matches
+        focus targetTerminal
+    end tell
+    return "focused"
+end run'''
+
+
+def run(*args, input=None, timeout=5):
+    return subprocess.run(args, input=input, text=True, capture_output=True,
+                          check=True, timeout=timeout).stdout.strip()
+
+
+def clients(tmux, socket, session):
+    rows = run(tmux, "-S", socket, "list-clients", "-F",
+               "\t".join(f"#{{{name}}}" for name in CLIENT_FIELDS))
+    fields = (row.split("\t") for row in rows.splitlines())
+    parsed = (dict(zip(CLIENT_FIELDS, row)) for row in fields if len(row) == len(CLIENT_FIELDS))
+    return [client for client in parsed if client["session_id"] == session]
+
+
+def client_identity_matches(client):
+    condition = "1"
+    for name in CLIENT_FIELDS:
+        condition = f"#{{&&:{condition},#{{==:#{{{name}}},{client[name]}}}}}"
+    return f"#{{==:#{{L:#{{?{condition},1,}}}},1}}"
+
+
+def click_target(socket, pane, expected_event):
+    tmux = shutil.which("tmux")
+    pid, session, linked, event = run(tmux, "-S", socket, "display-message", "-p", "-t", pane,
+                                      "#{pane_pid} #{session_id} #{window_linked} #{@ai_attention_event}").split()
+    attached = clients(tmux, socket, session)
+    if len(attached) != 1 or linked != "0" or attached[0]["client_termname"] != "xterm-ghostty" or (expected_event is not None and event != expected_event):
+        return None
+    if run(tmux, "-S", socket, "display-message", "-p", "-t", pane,
+           client_identity_matches(attached[0])) != "1":
+        return None
+    terminal = run("osascript", "-", attached[0]["client_name"], input=LOOKUP_TERMINAL, timeout=None)
+    if not terminal or "\n" in terminal:
+        return None
+    return {"socket": socket, "server": run(tmux, "-S", socket, "display-message", "-p", "#{pid}"),
+            "tmux": tmux, "pane": pane, "pane_pid": pid, "session": session,
+            "client": attached[0], "terminal": terminal,
+            "osascript": shutil.which("osascript"),
+            "event": event}
+
+
+def click(target):
+    tmux, socket, pane = target["tmux"], target["socket"], target["pane"]
+    if run(tmux, "-S", socket, "display-message", "-p", "#{pid}") != target["server"]:
+        return
+    if clients(tmux, socket, target["session"]) != [target["client"]]:
+        return
+    pid, session, window, state, event, linked = run(tmux, "-S", socket, "display-message", "-p", "-t", pane,
+        "#{pane_pid}\t#{session_id}\t#{window_id}\t#{@ai_attention_state}\t#{@ai_attention_event}\t#{window_linked}").split("\t")
+    if (pid != target["pane_pid"] or state not in ("", "done") or event != target["event"]
+            or session != target["session"] or linked != "0"):
+        return
+    if run(target["osascript"], "-", target["client"]["client_name"], target["terminal"], input=FOCUS_TERMINAL) != "focused":
+        return
+    condition = "#{||:#{==:#{@ai_attention_state},done},#{==:#{@ai_attention_state},}}"
+    for name, expected in (("session_attached", "1"), ("pid", target["server"]), ("pane_pid", pid),
+                           ("session_id", session), ("window_id", window), ("window_linked", "0"),
+                           ("@ai_attention_event", event)):
+        condition = f"#{{&&:{condition},#{{==:#{{{name}}},{expected}}}}}"
+    condition = f"#{{&&:{condition},{client_identity_matches(target['client'])}}}"
+    command = f"switch-client -c {shlex.quote(target['client']['client_name'])} -t {target['session']}:{window} ; select-pane -t {pane}"
+    run(tmux, "-S", socket, "if-shell", "-F", "-t", pane, condition, command)
+
+
+def pending_attention(socket, pane, event):
+    state, current_event = run("tmux", "-S", socket, "display-message", "-p", "-t", pane,
+                               "#{@ai_attention_state}|#{@ai_attention_event}").split("|")
+    return (state == "done" and (event is None or current_event == event)
+            and run("tmux", "-S", socket, "show-options", "-gqv", "@ai_notifications") != "off")
+
+
+def notify(socket, pane, event=None):
+    if not pending_attention(socket, pane, event):
+        return
+    label = run("tmux", "-S", socket, "display-message", "-p", "-t", pane,
+                "W #{window_index} P #{pane_index}")
+    label = " ".join(label.split())[:240]
+    platform = run("uname", "-s")
+    if platform == "Linux":
+        run("notify-send", "--app-name=tmux", "--hint=boolean:suppress-sound:true",
+            "--", "Agent needs attention", html.escape(label))
+    elif platform == "Darwin":
+        if shutil.which("terminal-notifier"):
+            target = None
+            try:
+                target = click_target(socket, pane, event)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
+            if not pending_attention(socket, pane, target["event"] if target else event):
+                return
+            args = ["terminal-notifier", "-title", "Agent needs attention", "-message", label]
+            if target:
+                callback = shlex.join([sys.executable, str(Path(__file__).resolve()), "click", json.dumps(target)])
+                args.extend(["-execute", callback])
+            run(*args, timeout=None)
+        else:
+            run("osascript", "-", "Agent needs attention", label,
+                input='on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv)\nend run')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    notification = commands.add_parser("notify")
+    notification.add_argument("--socket", required=True)
+    notification.add_argument("--pane", required=True)
+    notification.add_argument("--event")
+    navigation = commands.add_parser("click")
+    navigation.add_argument("target", type=json.loads)
+    args = parser.parse_args()
+    try:
+        if args.command == "notify":
+            notify(args.socket, args.pane, args.event)
+        else:
+            click(args.target)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return
+
+
+if __name__ == "__main__":
+    main()

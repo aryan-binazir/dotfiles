@@ -7,11 +7,14 @@
 socket=$(tmux display-message -p '#{socket_path}') || exit 1
 tmux() { command tmux -S "$socket" "$@"; }
 
-f0=⡇ f1=⠏ f2=⠛ f3=⠹ f4=⢸ f5=⣰ f6=⣤ f7=⣆
-b0=$(printf '\342\240') b1=$(printf '\342\241')
-b2=$(printf '\342\242') b3=$(printf '\342\243')
-working="" working_s="" done_w="" done_s="" windows="" sessions="" clients=""
-scan_dir=$(mktemp -d "${TMPDIR:-/tmp}/ai-spinner.XXXXXX") || exit 1
+if [ "${1-}" != --locked ] && ! command -v flock >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
+    exit 1
+fi
+if [ "${1-}" = --locked ]; then
+    scan_dir=$2
+else
+    scan_dir=$(mktemp -d "${TMPDIR:-/tmp}/ai-spinner.XXXXXX") || exit 1
+fi
 scan_result="$scan_dir/result"
 scan_ready="$scan_dir/ready"
 scan_pid=""
@@ -27,12 +30,32 @@ cleanup() {
 trap cleanup 0
 trap 'exit 0' HUP INT TERM
 
-# A replacement requests handover, then waits until the old owner finishes its
-# in-flight writes/notification. Keep the lock inode: unlinking races waiters.
-exec 9>"$socket.ai-spinner.lock" || exit 1
-command -v flock >/dev/null 2>&1 || exit 1
-tmux set -g @ai_spinner_pid $$ || exit 1
-flock -x 9 || exit 1
+if [ "${1-}" != --locked ]; then
+    exec 9>"$socket.ai-spinner.lock" || exit 1
+    if command -v flock >/dev/null 2>&1; then
+        tmux set -g @ai_spinner_pid $$ || exit 1
+        flock -x 9 || exit 1
+    else
+        exec python3 -c 'import fcntl, os, subprocess, sys
+try:
+    subprocess.run(["tmux", "-S", sys.argv[2], "set", "-g", "@ai_spinner_pid", str(os.getpid())], check=True)
+    fcntl.flock(9, fcntl.LOCK_EX)
+    os.set_inheritable(9, True)
+    os.execv("/bin/sh", ["sh", sys.argv[1], "--locked", sys.argv[3]])
+except BaseException:
+    os.rmdir(sys.argv[3])
+    raise' "$0" "$socket" "$scan_dir" || exit 1
+    fi
+fi
+
+f0=⡇ f1=⠏ f2=⠛ f3=⠹ f4=⢸ f5=⣰ f6=⣤ f7=⣆
+b0=$(printf '\342\240') b1=$(printf '\342\241')
+b2=$(printf '\342\242') b3=$(printf '\342\243')
+working="" working_s="" done_w="" done_s="" windows="" sessions="" clients=""
+notify_script=""
+if command -v python3 >/dev/null 2>&1; then
+    notify_script=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().with_name("tmux-agent-notify"))' "$0")
+fi
 
 scan_panes() {
     pane_rows=$(tmux list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{pane_current_command}|#{pane_title}') || return 1
@@ -110,6 +133,7 @@ apply_scan() {
 $client_rows
 EOF
     notify=0
+    notify_panes=""
     processed_states=""
     while IFS='|' read -r sess win pane busy; do
         # Pane closure is not completion. Never update a reused/default target.
@@ -146,11 +170,18 @@ EOF
         if [ "$state" != "$previous" ]; then
             # A pane can move after the async sample. Check membership and
             # persist together in tmux, never acknowledging its old window.
+            event_command=""
+            if [ "$completed" = 1 ]; then
+                event_command="set-option -p -t $pane @ai_attention_event '$$:$tick' ; "
+            fi
             applied=$(tmux if-shell -F -t "$pane" "#{==:#{window_id},$win}" \
-                "set-option -p -t $pane @ai_attention_state '$state' ; display-message -p applied" \
+                "set-option -p -t $pane @ai_attention_state '$state' ; ${event_command}display-message -p applied" \
                 'display-message -p moved' 2>/dev/null) || continue
             [ "$applied" = applied ] || continue
             [ "$completed" = 0 ] || notify=1
+            if [ "$completed" = 1 ] && [ "$state" = done ]; then
+                notify_panes="$notify_panes $pane"
+            fi
         fi
         processed_states="$processed_states|$pane=$state|"
         case $state in
@@ -166,6 +197,14 @@ EOF
         sound_command=$(tmux show -gqv @ai_attention_command)
         if [ -n "$sound_command" ]; then
             sh -c "$sound_command" 9>&- </dev/null >/dev/null 2>&1 &
+        fi
+    fi
+    if [ -n "$notify_panes" ] && [ -f "$notify_script" ] && command -v python3 >/dev/null 2>&1; then
+        enabled=$(tmux show -gqv @ai_notifications)
+        if [ "$enabled" != off ]; then
+            for pane in $notify_panes; do
+                python3 "$notify_script" notify --socket "$socket" --pane "$pane" --event "$$:$tick" 9>&- </dev/null >/dev/null 2>&1 &
+            done
         fi
     fi
     rm -f "$scan_result" "$scan_ready"

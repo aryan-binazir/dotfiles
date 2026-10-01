@@ -1,5 +1,6 @@
 """Exercise the installed entrypoint against a private real tmux server."""
 import fcntl
+import json
 import os
 import pty
 import re
@@ -39,6 +40,7 @@ class AttentionTest(unittest.TestCase):
         self.window = self.tmux("display-message", "-p", "#{window_id}").strip()
         self.session = self.tmux("display-message", "-p", "#{session_id}").strip()
         self.tmux("set-option", "-g", "allow-rename", "off")
+        self.tmux("set-option", "-g", "@ai_notifications", "off")
         self.sounds = self.directory / "sounds"
         self.tmux("set-option", "-g", "@ai_attention_command", f"printf 'sound\\n' >> '{self.sounds}'")
         self.processes = []
@@ -59,12 +61,12 @@ class AttentionTest(unittest.TestCase):
                     process.wait(timeout=5)
         self.tmux("kill-server", check=False)
 
-    def start_daemon(self, extra_env=None):
+    def start_daemon(self, extra_env=None, script=SCRIPT):
         pid = self.tmux("display-message", "-p", "#{pid}").strip()
         env = {**self.env, "TMUX": f"{self.socket},{pid},0", **(extra_env or {})}
         log = open(self.directory / f"daemon-{len(self.processes)}.log", "w")
         self.addCleanup(log.close)
-        process = subprocess.Popen(["sh", str(SCRIPT)], env=env, stdout=log, stderr=log)
+        process = subprocess.Popen(["sh", str(script)], env=env, stdout=log, stderr=log)
         self.processes.append(process)
         return process
 
@@ -91,6 +93,454 @@ class AttentionTest(unittest.TestCase):
 
     def sound_count(self):
         return len(self.sounds.read_text().splitlines()) if self.sounds.exists() else 0
+
+    def notification_tools(self, platform="Linux"):
+        tools = self.directory / "notification-tools"
+        tools.mkdir()
+        self.notifications = self.directory / "notifications.jsonl"
+        body = f"#!{sys.executable}\n" + r'''
+import json, os, pathlib, sys, time
+name = pathlib.Path(sys.argv[0]).name
+if name == "uname":
+    print(os.environ["AI_TEST_OS"])
+    sys.exit(0)
+script = sys.stdin.read() if name == "osascript" else ""
+if os.environ.get("AI_TEST_PERMISSION_DELAY") and (name == "terminal-notifier" or ("tty of" in script and "focus targetTerminal" not in script)):
+    time.sleep(float(os.environ["AI_TEST_PERMISSION_DELAY"]))
+with open(os.environ["AI_TEST_NOTIFICATIONS"], "a") as output:
+    output.write(json.dumps({"tool": name, "args": sys.argv[1:], "pid": os.getpid()}) + "\n")
+if name == "osascript":
+    if "focus targetTerminal" in script:
+        if sys.argv[-1] == os.environ.get("AI_TEST_TERMINAL_ID"):
+            print("focused")
+    elif "tty of" in script:
+        if os.environ.get("AI_TEST_LOOKUP_GATE"):
+            gate = pathlib.Path(os.environ["AI_TEST_LOOKUP_GATE"])
+            gate.with_suffix(".started").touch()
+            while not gate.exists():
+                time.sleep(0.02)
+        print(os.environ.get("AI_TEST_TERMINAL_ID", ""))
+        sys.exit(int(os.environ.get("AI_TEST_LOOKUP_EXIT", "0")))
+if os.environ.get("AI_TEST_BACKEND_DELAY"):
+    time.sleep(float(os.environ["AI_TEST_BACKEND_DELAY"]))
+sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
+'''
+        for name in ("uname", "notify-send", "terminal-notifier", "osascript"):
+            path = tools / name
+            path.write_text(body)
+            path.chmod(0o755)
+        self.tmux("set-option", "-g", "@ai_notifications", "on")
+        return {"PATH": f"{tools}:{self.env['PATH']}", "AI_TEST_OS": platform,
+                "AI_TEST_NOTIFICATIONS": str(self.notifications)}
+
+    def notification_records(self):
+        if not self.notifications.exists():
+            return []
+        return [json.loads(line) for line in self.notifications.read_text().splitlines()]
+
+    def test_background_completion_shows_an_informational_desktop_notification(self):
+        self.tmux("set-option", "-g", "base-index", "1")
+        self.tmux("move-window", "-r", "-t", "test")
+        self.tmux("set-option", "-w", "-t", self.window, "pane-base-index", "2")
+        env = self.notification_tools()
+        self.working()
+        self.start_daemon(env)
+        self.until(lambda: bool(self.icon()), "working")
+        self.stopped()
+        self.until(lambda: len(self.notification_records()) == 1, "desktop notification")
+        record = self.notification_records()[0]
+        self.assertEqual(record["tool"], "notify-send")
+        self.assertIn("Agent needs attention", record["args"])
+        self.assertEqual(record["args"][-1], "W 1 P 2")
+        self.assertNotIn("--action", record["args"])
+        self.assertEqual(self.icon(), "✓")
+        self.assertEqual(self.sound_count(), 1)
+
+    def test_macos_completion_without_an_exact_terminal_uses_an_informational_notification(self):
+        env = self.notification_tools("Darwin")
+        self.working()
+        self.start_daemon(env)
+        self.until(lambda: bool(self.icon()), "working")
+        self.stopped()
+        self.until(lambda: len(self.notification_records()) == 1, "macOS notification")
+        record = self.notification_records()[0]
+        self.assertEqual(record["tool"], "terminal-notifier")
+        self.assertEqual(record["args"][record["args"].index("-message") + 1], "W 0 P 0")
+        self.assertIn("Agent needs attention", record["args"])
+        self.assertNotIn("-execute", record["args"])
+        self.assertNotIn("-activate", record["args"])
+        self.assertEqual(self.icon(), "✓")
+
+    def test_foreground_completion_has_sound_without_a_desktop_popup(self):
+        env = self.notification_tools()
+        self.attach()
+        self.working()
+        self.start_daemon(env)
+        self.until(lambda: bool(self.icon()), "working")
+        self.stopped()
+        self.until(lambda: self.sound_count() == 1, "foreground completion")
+        time.sleep(0.5)
+        self.assertEqual(self.notification_records(), [])
+        self.assertEqual(self.icon(), "")
+
+    def test_disabled_or_failed_desktop_notifications_do_not_stop_attention(self):
+        env = self.notification_tools()
+        env["AI_TEST_BACKEND_EXIT"] = "7"
+        self.tmux("set-option", "-g", "@ai_notifications", "off")
+        daemon = self.start_daemon(env)
+        for enabled, count in (("off", 0), ("on", 1), ("on", 2)):
+            with self.subTest(enabled=enabled, count=count):
+                self.tmux("set-option", "-g", "@ai_notifications", enabled)
+                self.working()
+                self.until(lambda: bool(self.icon()) and "✓" not in self.icon(), "working again")
+                self.stopped()
+                self.until(lambda: self.icon() == "✓", "unread despite notification failure")
+                if count:
+                    self.until(lambda: len(self.notification_records()) == count, "attempted popup")
+                self.assertIsNone(daemon.poll())
+        self.assertEqual(self.sound_count(), 3)
+
+    def test_multiple_completed_panes_notify_once_each_across_reload(self):
+        env = self.notification_tools()
+        other = self.tmux("split-window", "-d", "-P", "-F", "#{pane_id}", "sleep 300").strip()
+        self.working()
+        self.working(other)
+        self.start_daemon(env)
+        self.until(lambda: bool(self.icon()), "both working")
+        self.stopped()
+        self.stopped(other)
+        self.until(lambda: len(self.notification_records()) == 2, "two pane notifications")
+        self.start_daemon(env)
+        time.sleep(1.5)
+        self.assertEqual(len(self.notification_records()), 2)
+        self.assertEqual(self.sound_count(), 1)
+
+    def test_macos_without_terminal_notifier_falls_back_to_native_informational_popup(self):
+        env = self.notification_tools("Darwin")
+        (self.directory / "notification-tools" / "terminal-notifier").unlink()
+        self.working()
+        self.start_daemon(env)
+        self.until(lambda: bool(self.icon()), "working")
+        self.stopped()
+        self.until(lambda: len(self.notification_records()) == 1, "native fallback popup")
+        self.assertEqual(self.notification_records()[0]["tool"], "osascript")
+        self.assertEqual(self.notification_records()[0]["args"][-1], "W 0 P 0")
+        self.assertEqual(self.icon(), "✓")
+
+    def mac_notification_callback(self, extra_env=None, timeout=8):
+        env = self.notification_tools("Darwin")
+        env["AI_TEST_TERMINAL_ID"] = "ghostty-terminal-123"
+        env.update(extra_env or {})
+        self.env.update(env)
+        self.env["TERM"] = "xterm-ghostty"
+        self.tmux("new-window", "-t", "test", "-n", "viewed", "sleep 300")
+        self.attach()
+        self.working()
+        self.start_daemon(env)
+        self.until(lambda: bool(self.icon()), "background work")
+        self.stopped()
+        self.until(lambda: any(record["tool"] == "terminal-notifier" for record in self.notification_records()), "mac popup", timeout=timeout)
+        record = next(record for record in self.notification_records() if record["tool"] == "terminal-notifier")
+        self.assertIn("-execute", record["args"])
+        return record["args"][record["args"].index("-execute") + 1]
+
+    def test_mac_permission_prompts_can_wait_longer_than_five_seconds(self):
+        callback = self.mac_notification_callback({"AI_TEST_PERMISSION_DELAY": "6"}, timeout=20)
+        subprocess.run(["sh", "-c", callback], env=self.env, check=True, timeout=10)
+        self.assertEqual(self.tmux("list-clients", "-F", "#{pane_id}").strip(), self.pane)
+
+    def test_mac_lookup_rechecks_attention_event_and_mute_before_delivery(self):
+        env = self.notification_tools("Darwin")
+        env["AI_TEST_TERMINAL_ID"] = "ghostty-terminal-123"
+        self.env.update(env)
+        self.env["TERM"] = "xterm-ghostty"
+        self.tmux("new-window", "-t", "test", "-n", "viewed", "sleep 300")
+        self.attach()
+        for change in ("working", "acknowledged", "event", "muted"):
+            with self.subTest(change=change):
+                gate = self.directory / change
+                self.notifications.write_text("")
+                self.addCleanup(gate.touch)
+                self.tmux("set-option", "-p", "-t", self.pane, "@ai_attention_state", "done")
+                self.tmux("set-option", "-p", "-t", self.pane, "@ai_attention_event", "test:1")
+                self.tmux("set-option", "-g", "@ai_notifications", "on")
+                helper = subprocess.Popen([sys.executable, str(ROOT / "stow/scripts/tmux-agent-notify"),
+                    "notify", "--socket", self.socket, "--pane", self.pane, "--event", "test:1"],
+                    env={**self.env, "AI_TEST_LOOKUP_GATE": str(gate)})
+                self.processes.append(helper)
+                self.until(lambda: gate.with_suffix(".started").exists(), "lookup waiting")
+                if change == "muted":
+                    self.tmux("set-option", "-g", "@ai_notifications", "off")
+                elif change == "event":
+                    self.tmux("set-option", "-p", "-t", self.pane, "@ai_attention_event", "test:2")
+                else:
+                    state = "working" if change == "working" else ""
+                    self.tmux("set-option", "-p", "-t", self.pane, "@ai_attention_state", state)
+                gate.touch()
+                self.assertEqual(helper.wait(timeout=5), 0)
+                self.assertFalse(any(row["tool"] == "terminal-notifier" for row in self.notification_records()))
+
+    def test_failed_replacement_preparation_preserves_the_running_daemon(self):
+        self.working()
+        old = self.start_daemon()
+        self.until(lambda: bool(self.icon()), "original daemon working")
+        for failure in ("mktemp", "missing-python", "broken-python"):
+            with self.subTest(failure=failure):
+                tools = self.directory / failure
+                tools.mkdir()
+                for name in ("sh", "tmux", "mktemp", "rm", "rmdir"):
+                    (tools / name).symlink_to(shutil.which(name))
+                if failure == "mktemp":
+                    (tools / "flock").symlink_to(shutil.which("flock"))
+                    (tools / "mktemp").unlink()
+                    (tools / "mktemp").write_text("#!/bin/sh\nexit 1\n")
+                    (tools / "mktemp").chmod(0o755)
+                elif failure == "broken-python":
+                    (tools / "python3").write_text("#!/missing-python-interpreter\n")
+                    (tools / "python3").chmod(0o755)
+                replacement = self.start_daemon({"PATH": str(tools)})
+                self.until(lambda: replacement.poll() is not None, "replacement rejected")
+                time.sleep(0.5)
+                self.assertIsNone(old.poll())
+                self.assertEqual(self.tmux("show-options", "-gqv", "@ai_spinner_pid").strip(), str(old.pid))
+        self.stopped()
+        self.until(lambda: self.icon() == "✓", "original daemon still detects completion")
+
+    def test_mac_tty_match_produces_a_click_that_focuses_the_exact_pane(self):
+        callback = self.mac_notification_callback()
+        subprocess.run(["sh", "-c", callback], env=self.env, check=True, timeout=10)
+        self.assertEqual(self.tmux("list-clients", "-F", "#{pane_id}").strip(), self.pane)
+        focus = self.notification_records()[-1]
+        self.assertEqual(focus["tool"], "osascript")
+        self.assertIn("ghostty-terminal-123", focus["args"])
+
+    def test_mac_click_targets_original_client_with_a_newer_unrelated_client(self):
+        callback = self.mac_notification_callback()
+        original = self.tmux("list-clients", "-F", "#{client_name}").strip()
+        self.tmux("new-session", "-d", "-s", "other", "sleep 300")
+        self.attach(session="other")
+        self.until(lambda: len(self.tmux("list-clients", "-F", "#{client_name}").splitlines()) == 2,
+                   "two independent clients attached")
+        before = self.tmux("list-clients", "-F", "#{client_name} #{session_id} #{window_id} #{pane_id}").splitlines()
+        other = next(row for row in before if not row.startswith(original + " "))
+        subprocess.run(["sh", "-c", callback], env=self.env, check=True, timeout=10)
+        after = self.tmux("list-clients", "-F", "#{client_name} #{session_id} #{window_id} #{pane_id}").splitlines()
+        self.assertIn(other, after)
+        self.assertIn(f"{original} {self.session} {self.window} {self.pane}", after)
+
+    def test_old_notification_cannot_focus_a_later_completion_in_the_same_pane(self):
+        callback = self.mac_notification_callback()
+        self.working()
+        self.until(lambda: bool(self.icon()) and "✓" not in self.icon(), "resumed work")
+        self.stopped()
+        self.until(lambda: self.sound_count() == 2 and self.icon() == "✓", "later completion")
+        before = self.tmux("list-clients", "-F", "#{pane_id}").strip()
+        subprocess.run(["sh", "-c", callback], env=self.env, check=True, timeout=10)
+        self.assertEqual(self.tmux("list-clients", "-F", "#{pane_id}").strip(), before)
+
+    def test_installed_symlink_finds_the_notification_helper_in_the_stow_source(self):
+        env = self.notification_tools()
+        installed = self.directory / "installed"
+        installed.mkdir()
+        script = installed / "ai-spinner.sh"
+        script.symlink_to(SCRIPT)
+        self.working()
+        self.start_daemon(env, script=script)
+        self.until(lambda: bool(self.icon()), "working through installed symlink")
+        self.stopped()
+        self.until(lambda: len(self.notification_records()) == 1, "helper found beside real source")
+
+    def test_daemon_and_reload_work_without_the_linux_flock_executable(self):
+        tools = self.directory / "portable-tools"
+        tools.mkdir()
+        for name in ("sh", "tmux", "mktemp", "python3", "rm", "rmdir", "cat", "sort", "sleep", "awk"):
+            (tools / name).symlink_to(shutil.which(name))
+        env = {"PATH": str(tools)}
+        self.working()
+        old = self.start_daemon(env)
+        self.until(lambda: bool(self.icon()), "portable daemon working")
+        self.stopped()
+        self.until(lambda: self.icon() == "✓" and self.sound_count() == 1, "portable completion")
+        new = self.start_daemon(env)
+        self.until(lambda: old.poll() is not None, "portable ownership handed over")
+        self.assertEqual(self.tmux("show-options", "-gqv", "@ai_spinner_pid").strip(), str(new.pid))
+        time.sleep(1)
+        self.assertEqual(self.sound_count(), 1)
+        self.assertEqual(self.icon(), "✓")
+
+    def test_unsupported_tmux_client_lookup_keeps_mac_popup_informational(self):
+        env = self.notification_tools("Darwin")
+        env["AI_TEST_TERMINAL_ID"] = "ghostty-terminal-123"
+        real_tmux = shutil.which("tmux", path=self.env["PATH"])
+        wrapper = self.directory / "notification-tools" / "tmux"
+        wrapper.write_text(f"#!{sys.executable}\n" +
+                           "import os, sys\n" +
+                           "if any('#{L:' in arg for arg in sys.argv[1:]): sys.exit(0)\n" +
+                           f"os.execv({real_tmux!r}, [{real_tmux!r}, *sys.argv[1:]])\n")
+        wrapper.chmod(0o755)
+        self.env.update(env)
+        self.env["TERM"] = "xterm-ghostty"
+        self.tmux("new-window", "-t", "test", "-n", "viewed", "sleep 300")
+        self.attach()
+        self.working()
+        self.start_daemon(env)
+        self.until(lambda: bool(self.icon()), "background work")
+        self.stopped()
+        self.until(lambda: any(row["tool"] == "terminal-notifier" for row in self.notification_records()),
+                   "informational popup")
+        popup = next(row for row in self.notification_records() if row["tool"] == "terminal-notifier")
+        self.assertNotIn("-execute", popup["args"])
+        self.assertEqual(self.icon(), "✓")
+
+    def test_shared_session_does_not_offer_mac_click_navigation(self):
+        env = self.notification_tools("Darwin")
+        env["AI_TEST_TERMINAL_ID"] = "ghostty-terminal-123"
+        self.env.update(env)
+        self.env["TERM"] = "xterm-ghostty"
+        self.tmux("new-window", "-t", "test", "-n", "viewed", "sleep 300")
+        self.attach()
+        self.attach()
+        self.until(lambda: len(self.tmux("list-clients", "-F", "#{client_name}").splitlines()) == 2, "both clients attached")
+        self.working()
+        self.start_daemon(env)
+        self.until(lambda: bool(self.icon()), "background work")
+        self.stopped()
+        self.until(lambda: any(row["tool"] == "terminal-notifier" for row in self.notification_records()), "informational popup")
+        popup = next(row for row in self.notification_records() if row["tool"] == "terminal-notifier")
+        self.assertNotIn("-execute", popup["args"])
+
+    def test_click_does_nothing_if_the_pane_closed_or_another_client_joined(self):
+        callback = self.mac_notification_callback()
+        self.attach()
+        self.until(lambda: len(self.tmux("list-clients", "-F", "#{client_name}").splitlines()) == 2, "second client attached")
+        for closed in (False, True):
+            with self.subTest(closed=closed):
+                if closed:
+                    self.tmux("kill-pane", "-t", self.pane)
+                before = self.tmux("list-clients", "-F", "#{pane_id}")
+                records = len(self.notification_records())
+                subprocess.run(["sh", "-c", callback], env=self.env, check=True, timeout=10)
+                self.assertEqual(self.tmux("list-clients", "-F", "#{pane_id}"), before)
+                self.assertEqual(len(self.notification_records()), records)
+
+    def test_failed_ghostty_focus_does_not_switch_the_tmux_client(self):
+        callback = self.mac_notification_callback()
+        self.env["AI_TEST_TERMINAL_ID"] = "different-ghostty-terminal"
+        before = self.tmux("list-clients", "-F", "#{pane_id}")
+        subprocess.run(["sh", "-c", callback], env=self.env, check=True, timeout=10)
+        self.assertEqual(self.tmux("list-clients", "-F", "#{pane_id}"), before)
+
+    def test_click_does_not_navigate_a_window_linked_after_the_notification(self):
+        callback = self.mac_notification_callback()
+        self.tmux("new-session", "-d", "-s", "sibling", "sleep 300")
+        self.tmux("link-window", "-d", "-s", self.window, "-t", "sibling")
+        before = self.tmux("list-clients", "-F", "#{pane_id}")
+        records = len(self.notification_records())
+        subprocess.run(["sh", "-c", callback], env=self.env, check=True, timeout=10)
+        self.assertEqual(self.tmux("list-clients", "-F", "#{pane_id}"), before)
+        self.assertEqual(len(self.notification_records()), records)
+
+    def test_click_follows_a_pane_moved_within_its_original_session(self):
+        callback = self.mac_notification_callback()
+        destination = self.tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", "test", "sleep 300").strip()
+        self.tmux("move-pane", "-s", self.pane, "-t", destination)
+        subprocess.run(["/bin/sh", "-c", callback], env={**self.env, "PATH": "/no-tools"}, check=True, timeout=10)
+        self.assertEqual(self.tmux("list-clients", "-F", "#{pane_id}").strip(), self.pane)
+
+    def test_click_selects_the_completed_split_even_after_focus_acknowledges_its_window(self):
+        callback = self.mac_notification_callback()
+        sibling = self.tmux("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", self.window, "sleep 300").strip()
+        self.tmux("select-pane", "-t", sibling)
+        self.tmux("select-window", "-t", self.window)
+        self.until(lambda: self.icon() == "", "normal focus acknowledges completed window")
+        subprocess.run(["sh", "-c", callback], env=self.env, check=True, timeout=10)
+        self.assertEqual(self.tmux("list-clients", "-F", "#{pane_id}").strip(), self.pane)
+
+    def test_closed_pane_notification_cannot_focus_another_terminal(self):
+        callback = self.mac_notification_callback()
+        self.tmux("kill-pane", "-t", self.pane)
+        before = self.tmux("list-clients", "-F", "#{pane_id}")
+        records = len(self.notification_records())
+        subprocess.run(["sh", "-c", callback], env=self.env, check=True, timeout=10)
+        self.assertEqual(self.tmux("list-clients", "-F", "#{pane_id}"), before)
+        self.assertEqual(len(self.notification_records()), records)
+
+    def test_renaming_sessions_does_not_change_the_numeric_click_target_or_execute_names(self):
+        self.mac_notification_callback()
+        marker = self.directory / "must-not-exist"
+        hostile = 'quoted " $(touch ' + str(marker) + ') [*]'
+        self.tmux("rename-session", "-t", self.session, hostile)
+        self.tmux("rename-window", "-t", self.window, hostile)
+        notify = ROOT / "stow/scripts/tmux-agent-notify"
+        subprocess.run([sys.executable, str(notify), "notify", "--socket", self.socket, "--pane", self.pane],
+                       env=self.env, check=True, timeout=10)
+        popup = [row for row in self.notification_records() if row["tool"] == "terminal-notifier"][-1]
+        callback = popup["args"][popup["args"].index("-execute") + 1]
+        subprocess.run(["sh", "-c", callback], env=self.env, check=True, timeout=10)
+        self.assertEqual(self.tmux("list-clients", "-F", "#{pane_id}").strip(), self.pane)
+        self.assertFalse(marker.exists())
+
+    def test_older_ghostty_api_keeps_mac_notification_informational(self):
+        env = self.notification_tools("Darwin")
+        env["AI_TEST_LOOKUP_EXIT"] = "1"
+        self.env.update(env)
+        self.env["TERM"] = "xterm-ghostty"
+        self.tmux("new-window", "-t", "test", "-n", "viewed", "sleep 300")
+        self.attach()
+        self.working()
+        self.start_daemon(env)
+        self.until(lambda: bool(self.icon()), "background work")
+        self.stopped()
+        self.until(lambda: any(row["tool"] == "terminal-notifier" for row in self.notification_records()), "legacy API fallback")
+        popup = next(row for row in self.notification_records() if row["tool"] == "terminal-notifier")
+        self.assertNotIn("-execute", popup["args"])
+        self.assertEqual(self.icon(), "✓")
+
+    def test_notification_backend_does_not_hold_the_daemon_handover_lock(self):
+        env = self.notification_tools()
+        env["AI_TEST_BACKEND_DELAY"] = "30"
+        self.working()
+        old = self.start_daemon(env)
+        self.until(lambda: bool(self.icon()), "working")
+        self.stopped()
+        self.until(lambda: len(self.notification_records()) == 1, "slow backend started")
+        backend_pid = self.notification_records()[0]["pid"]
+        def stop_backend():
+            try:
+                os.kill(backend_pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        self.addCleanup(stop_backend)
+        self.start_daemon(env)
+        self.until(lambda: old.poll() is not None, "handover before backend finishes", timeout=3)
+        self.assertEqual(len(self.notification_records()), 1)
+
+    def test_runtime_popup_mute_survives_config_reload_without_muting_sound(self):
+        config = self.directory / "notification-reload.conf"
+        config.write_text("\n".join(line for line in CONFIG.read_text().splitlines()
+                                  if line.startswith("set ") and "@ai_notifications" in line) + "\n")
+        self.tmux("set-option", "-g", "@ai_notifications", "off")
+        self.tmux("source-file", str(config))
+        self.tmux("source-file", str(config))
+        self.assertEqual(self.tmux("show-options", "-gqv", "@ai_notifications").strip(), "off")
+        self.assertTrue(self.tmux("show-options", "-gqv", "@ai_attention_command").strip())
+
+    def test_missing_optional_python_or_notifier_preserves_linux_monitoring(self):
+        tools = self.directory / "shell-only-tools"
+        tools.mkdir()
+        for name in ("sh", "tmux", "flock", "mktemp", "rm", "rmdir", "cat", "sort", "sleep", "awk"):
+            (tools / name).symlink_to(shutil.which(name))
+        copied = self.directory / "ai-spinner.sh"
+        shutil.copyfile(SCRIPT, copied)
+        self.tmux("set-option", "-g", "@ai_notifications", "on")
+        for count, script, env in ((1, SCRIPT, {"PATH": str(tools)}), (2, copied, None)):
+            with self.subTest(script=str(script), missing_python=bool(env)):
+                self.working()
+                daemon = self.start_daemon(env, script=script)
+                self.until(lambda: bool(self.icon()) and "✓" not in self.icon(), "monitor without optional tools")
+                self.stopped()
+                self.until(lambda: self.icon() == "✓" and self.sound_count() == count, "completion without optional tools")
+                self.assertIsNone(daemon.poll())
 
     def test_spinner_animation_does_not_repaint_stationary_application(self):
         body = "\n".join(f"BODY_ROW_{i:02d}: stationary application content" for i in range(20))
@@ -199,10 +649,10 @@ class AttentionTest(unittest.TestCase):
         self.assertEqual(self.icon(), "✓")
         self.assertEqual(self.sound_count(), 1)
 
-    def attach(self):
+    def attach(self, session="test"):
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
-        client = subprocess.Popen(["tmux", "-S", self.socket, "attach-session", "-t", "test"],
+        client = subprocess.Popen(["tmux", "-S", self.socket, "attach-session", "-t", session],
                                   stdin=slave, stdout=slave, stderr=slave, env=self.env)
         os.close(slave)
         self.processes.append(client)
