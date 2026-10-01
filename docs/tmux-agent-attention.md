@@ -59,7 +59,7 @@ captures don't advance completion detection.
 ## Desktop notifications
 
 Each newly quiet background pane can show an OS notification saying **Agent needs
-attention**, labeled with its session, window, and pane number. The existing
+attention**, labeled with the window and pane indices, such as `W 1 P 2`. The existing
 window-level acknowledgement rule suppresses popups for windows you are already
 viewing. Popups do not add another sound. Simultaneous panes notify separately;
 their existing sound stays coalesced. Dismissing a popup does not clear its check.

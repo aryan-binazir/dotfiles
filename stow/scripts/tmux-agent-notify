@@ -115,7 +115,7 @@ def notify(socket, pane, event=None):
     if not pending_attention(socket, pane, event):
         return
     label = run("tmux", "-S", socket, "display-message", "-p", "-t", pane,
-                "Session #{session_name}, window #{window_name}, pane #{pane_index}")
+                "W #{window_index} P #{pane_index}")
     label = " ".join(label.split())[:240]
     platform = run("uname", "-s")
     if platform == "Linux":

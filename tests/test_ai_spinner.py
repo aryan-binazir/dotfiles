@@ -139,6 +139,9 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         return [json.loads(line) for line in self.notifications.read_text().splitlines()]
 
     def test_background_completion_shows_an_informational_desktop_notification(self):
+        self.tmux("set-option", "-g", "base-index", "1")
+        self.tmux("move-window", "-r", "-t", "test")
+        self.tmux("set-option", "-w", "-t", self.window, "pane-base-index", "2")
         env = self.notification_tools()
         self.working()
         self.start_daemon(env)
@@ -148,7 +151,7 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         record = self.notification_records()[0]
         self.assertEqual(record["tool"], "notify-send")
         self.assertIn("Agent needs attention", record["args"])
-        self.assertTrue(any("test" in argument for argument in record["args"]))
+        self.assertEqual(record["args"][-1], "W 1 P 2")
         self.assertNotIn("--action", record["args"])
         self.assertEqual(self.icon(), "✓")
         self.assertEqual(self.sound_count(), 1)
@@ -162,6 +165,7 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.until(lambda: len(self.notification_records()) == 1, "macOS notification")
         record = self.notification_records()[0]
         self.assertEqual(record["tool"], "terminal-notifier")
+        self.assertEqual(record["args"][record["args"].index("-message") + 1], "W 0 P 0")
         self.assertIn("Agent needs attention", record["args"])
         self.assertNotIn("-execute", record["args"])
         self.assertNotIn("-activate", record["args"])
@@ -220,6 +224,7 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.stopped()
         self.until(lambda: len(self.notification_records()) == 1, "native fallback popup")
         self.assertEqual(self.notification_records()[0]["tool"], "osascript")
+        self.assertEqual(self.notification_records()[0]["args"][-1], "W 0 P 0")
         self.assertEqual(self.icon(), "✓")
 
     def mac_notification_callback(self, extra_env=None, timeout=8):
