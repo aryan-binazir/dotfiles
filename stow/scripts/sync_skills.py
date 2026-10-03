@@ -13,7 +13,7 @@ SKILLS_REPO = Path("~/repos/skills").expanduser()
 CURSOR_PLUGINS_REPO = Path("~/repos/cursor-plugins").expanduser()
 CURSOR_PLUGINS_URL = "https://github.com/cursor/plugins.git"
 PSTACK_SKILLS_PATH = Path("pstack/skills")
-PSTACK_EXCLUDED_SKILL_NAMES = {"setup-pstack", "poteto-mode", "make-bot-ui"}
+PSTACK_EXCLUDED_SKILL_NAMES = {"setup-pstack", "poteto-mode", "make-bot-ui", "teach"}
 HUMANLAYER_SKILLS_REPO = Path("~/repos/humanlayer-skills").expanduser()
 HUMANLAYER_SKILLS_URL = "https://github.com/humanlayer/skills.git"
 SHOW_ME_PATH = Path("plugins/show-me/skills/show-me")
@@ -93,6 +93,9 @@ def remove_excluded_pstack_links() -> None:
     for skill_name in sorted(PSTACK_EXCLUDED_SKILL_NAMES):
         target_path = TARGET_DIR / skill_name
         if not target_path.is_symlink():
+            continue
+        source_path = CURSOR_PLUGINS_REPO / PSTACK_SKILLS_PATH / skill_name
+        if target_path.resolve(strict=False) != source_path.resolve(strict=False):
             continue
         print(f"Removing excluded pstack skill link {target_path}")
         target_path.unlink()
