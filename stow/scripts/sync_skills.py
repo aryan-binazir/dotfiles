@@ -17,6 +17,9 @@ PSTACK_EXCLUDED_SKILL_NAMES = {"setup-pstack", "poteto-mode", "make-bot-ui", "te
 HUMANLAYER_SKILLS_REPO = Path("~/repos/humanlayer-skills").expanduser()
 HUMANLAYER_SKILLS_URL = "https://github.com/humanlayer/skills.git"
 SHOW_ME_PATH = Path("plugins/show-me/skills/show-me")
+REMOTION_SKILLS_REPO = Path("~/repos/remotion-skills").expanduser()
+REMOTION_SKILLS_URL = "https://github.com/remotion-dev/skills.git"
+REMOTION_SKILL_PATH = Path("skills/remotion-best-practices")
 TARGET_DIR = Path("~/repos/cc-config/skills/sym_linked").expanduser()
 CC_CONFIG_SKILLS_DIR = Path("~/repos/cc-config/skills").expanduser()
 AGENTS_SOURCE = Path("~/repos/cc-config/AGENTS.md").expanduser()
@@ -26,6 +29,7 @@ SOURCE_DIRS = [
 ]
 SOURCE_SKILLS = [
     HUMANLAYER_SKILLS_REPO / SHOW_ME_PATH,
+    REMOTION_SKILLS_REPO / REMOTION_SKILL_PATH,
 ]
 APP_SKILL_DIRS = [
     ("pi", Path("~/.pi/agent").expanduser(), Path("~/.pi/agent/skills").expanduser()),
@@ -131,7 +135,19 @@ def pull_skills() -> None:
         SHOW_ME_PATH,
     )
 
-    for repo in [SKILLS_REPO, CURSOR_PLUGINS_REPO, HUMANLAYER_SKILLS_REPO]:
+    clone_sparse_repo(
+        REMOTION_SKILLS_REPO,
+        "Remotion skills repo",
+        REMOTION_SKILLS_URL,
+        REMOTION_SKILL_PATH,
+    )
+
+    for repo in [
+        SKILLS_REPO,
+        CURSOR_PLUGINS_REPO,
+        HUMANLAYER_SKILLS_REPO,
+        REMOTION_SKILLS_REPO,
+    ]:
         print(f"Pulling {repo}")
         try:
             subprocess.run(["git", "-C", str(repo), "pull", "--ff-only"], check=True)
