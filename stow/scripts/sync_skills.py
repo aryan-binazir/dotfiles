@@ -13,7 +13,7 @@ SKILLS_REPO = Path("~/repos/skills").expanduser()
 CURSOR_PLUGINS_REPO = Path("~/repos/cursor-plugins").expanduser()
 CURSOR_PLUGINS_URL = "https://github.com/cursor/plugins.git"
 PSTACK_SKILLS_PATH = Path("pstack/skills")
-PSTACK_EXCLUDED_SKILL_NAMES = {"setup-pstack", "poteto-mode", "make-bot-ui", "teach"}
+PSTACK_ALLOWED_SKILL_NAMES = {"unslop"}
 HUMANLAYER_SKILLS_REPO = Path("~/repos/humanlayer-skills").expanduser()
 HUMANLAYER_SKILLS_URL = "https://github.com/humanlayer/skills.git"
 SHOW_ME_PATH = Path("plugins/show-me/skills/show-me")
@@ -94,12 +94,14 @@ def clone_sparse_repo(repo: Path, label: str, url: str, sparse_path: Path) -> No
 
 
 def remove_excluded_pstack_links() -> None:
-    for skill_name in sorted(PSTACK_EXCLUDED_SKILL_NAMES):
-        target_path = TARGET_DIR / skill_name
+    skills_dir = (CURSOR_PLUGINS_REPO / PSTACK_SKILLS_PATH).resolve(strict=False)
+    for target_path in sorted(TARGET_DIR.iterdir()):
         if not target_path.is_symlink():
             continue
-        source_path = CURSOR_PLUGINS_REPO / PSTACK_SKILLS_PATH / skill_name
-        if target_path.resolve(strict=False) != source_path.resolve(strict=False):
+        source_path = target_path.resolve(strict=False)
+        if not source_path.is_relative_to(skills_dir):
+            continue
+        if target_path.name in PSTACK_ALLOWED_SKILL_NAMES:
             continue
         print(f"Removing excluded pstack skill link {target_path}")
         target_path.unlink()
@@ -111,7 +113,7 @@ def iter_pstack_skill_dirs() -> list[Path]:
 
     skill_dirs: list[Path] = []
     for source_path in sorted(skills_dir.iterdir()):
-        if source_path.name in PSTACK_EXCLUDED_SKILL_NAMES:
+        if source_path.name not in PSTACK_ALLOWED_SKILL_NAMES:
             print(f"Skipping pstack skill {source_path.name}")
             continue
         if not source_path.is_dir() or not (source_path / "SKILL.md").is_file():
