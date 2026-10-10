@@ -6,17 +6,21 @@
   Cursor, and Pi terminal-text heuristics.
 - **✓:** an observed busy agent stopped looking busy for three quiet
   observations (roughly two seconds from the first quiet observation).
-  It means **check this agent**, not that its task succeeded. Waiting for input,
-  interrupted work, errors, and completion intentionally share this indicator.
-- **✓ plus spinner:** one pane/window has unread attention while another works.
+  Its turn looks stopped, or it is showing a prompt the detector missed, and the
+  output is unread. This does not prove task success;
+  interrupted turns and errors can also stop activity.
+- **!:** a known visible approval or question dialog needs input. This takes
+  priority over activity in that pane, including Pi dialogs that retain a spinner.
+- Indicators combine when different panes/windows are blocked, stopped, or working.
 
 Window tabs, `prefix s` session and expanded window rows, and `prefix w` use the
-same indicators. Stable option values refer to a shared hidden environment
+same indicators. Expanded pane rows distinguish the individual agents too.
+Stable option values refer to a shared hidden environment
 variable for the animation frame; consumers expand them with `#{E:@ai_spinner}`
 or `#{E:@ai_spinner_s}`. Frame updates use status-only refreshes, not option writes
 that invalidate ordinary application panes. Stable idle and unread indicators do
 not force repeated redraws. State/indicator transitions can still trigger tmux's
-normal full redraw. A session retains its check while any of its windows has
+normal full redraw. A session retains its markers while any of its windows has
 unread attention; visiting a different window in that session doesn't clear it.
 
 Detection runs roughly once a second and animation roughly four times a second.
@@ -26,11 +30,14 @@ animation stops. The internal frame is not exported to new pane processes.
 
 ## Acknowledgement and persistence
 
-Attention clears when that window is shown in a focused attached tmux client,
+Both unread indicators clear when that window is shown in a focused attached tmux client,
 provided its active pane is not in a picker or copy mode. A foreground completion
 still makes a sound but is immediately considered seen. If multiple clients are
 attached, viewing the window in any focused client acknowledges it. This is
 window-level acknowledgement, not a guarantee that every split was read.
+Zooming a pane still acknowledges the entire window. A seen input prompt stays
+acknowledged while it remains open; polling and monitor reloads do not alert again.
+When the agent resumes, a later prompt or completion can create new attention.
 
 Starting work again supersedes that pane's previous check. Closing the pane
 removes its state without creating another completion. Linked windows contribute
@@ -56,13 +63,30 @@ can be missed; changing an agent's UI wording can break detection. An unrecogniz
 idle agent does not get marked done just because the monitor starts. Failed
 captures don't advance completion detection.
 
+Input detection uses the most recent 20 nonempty screen lines. Claude requires
+paired dialog controls, such as confirmation plus cancellation, permission choices,
+or MCP input controls. Codex uses its approval/question footer or its `Action Required`
+title, including when its npm launcher appears as `node`. Pi uses the standard extension selector/input hints, the installed
+auto-permissions selector and note controls, and the questionnaire's controls.
+A `π - ` title identifies Pi even behind a shell wrapper.
+Ordinary prose mentioning permission or questions does not establish a blocker.
+A later Claude/Codex composer, including typed input, makes earlier dialog controls stale. New or
+custom dialog layouts and non-visible prompts may still fall back to `✓` after
+activity stops. An unanswered question written as ordinary assistant prose is not
+classified as a blocking dialog.
+
+A disappearing input dialog uses the same three-observation debounce. A single
+redraw does not produce another notification for the same prompt. If work resumes,
+the spinner replaces it; if the turn settles, unread output becomes `✓`.
+
 ## Desktop notifications
 
-Each newly quiet background pane can show an OS notification saying **Agent needs
-attention**, labeled with the window and pane indices, such as `W 1 P 2`. The existing
+Each newly quiet background pane can show an OS notification saying **Agent turn
+finished**. A newly blocked background pane says **Agent needs input**. Both are
+labeled with the window and pane indices, such as `W 1 P 2`. The existing
 window-level acknowledgement rule suppresses popups for windows you are already
 viewing. Popups do not add another sound. Simultaneous panes notify separately;
-their existing sound stays coalesced. Dismissing a popup does not clear its check.
+their existing sound stays coalesced. Dismissing a popup does not clear its marker.
 
 Notifications are automatic. There is no binding shortcut or terminal-title
 rewrite. The optional `stow/scripts/tmux-agent-notify` helper uses Python 3's
@@ -158,9 +182,10 @@ in-flight reload/pane-movement races, status-only animation and bounded polling;
 they never source the live config or run real AI agents. Verified with tmux 3.7c
 and Linux `flock`. Notification tests record OS command boundaries and execute
 captured callbacks against real private tmux servers; they do not show live
-desktop popups. macOS command paths and the no-`flock` fallback are exercised on
-Linux with controlled tool fixtures. Actual macOS desktop delivery, AppleScript
-compilation/permissions, and click focus are **NOT VERIFIED on this Linux host**.
+desktop popups. The attention suite also runs on macOS with tmux 3.8, BSD awk,
+and the Python lock fallback, and on Linux with tmux 3.5a, mawk, and `flock`.
+macOS and Linux notification commands use controlled fixtures. Native desktop
+delivery, AppleScript permissions, and Ghostty focus still need a desktop smoke check.
 
 For a Mac smoke check, use a private tmux socket in Ghostty with these scripts.
 Run synthetic work in a background window, then confirm one native popup and an

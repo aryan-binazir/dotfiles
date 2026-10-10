@@ -24,6 +24,14 @@ SCRIPT = ROOT / "stow/scripts/ai-spinner.sh"
 CONFIG = ROOT / "stow/arch-linux/tmux/.config/tmux/tmux.conf"
 
 
+def copy_shell(executable):
+    executable.unlink(missing_ok=True)
+    shutil.copy(shutil.which("bash" if sys.platform == "darwin" else "sh"), executable)
+    if sys.platform == "darwin":
+        subprocess.run(["codesign", "--force", "--sign", "-", str(executable)],
+                       check=True, capture_output=True)
+
+
 @unittest.skipUnless(shutil.which("tmux"), "tmux is required")
 class AttentionTest(unittest.TestCase):
     def setUp(self):
@@ -40,6 +48,7 @@ class AttentionTest(unittest.TestCase):
         self.window = self.tmux("display-message", "-p", "#{window_id}").strip()
         self.session = self.tmux("display-message", "-p", "#{session_id}").strip()
         self.tmux("set-option", "-g", "allow-rename", "off")
+        self.tmux("set-option", "-g", "assume-paste-time", "0")
         self.tmux("set-option", "-g", "@ai_notifications", "off")
         self.sounds = self.directory / "sounds"
         self.tmux("set-option", "-g", "@ai_attention_command", f"printf 'sound\\n' >> '{self.sounds}'")
@@ -150,7 +159,7 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.until(lambda: len(self.notification_records()) == 1, "desktop notification")
         record = self.notification_records()[0]
         self.assertEqual(record["tool"], "notify-send")
-        self.assertIn("Agent needs attention", record["args"])
+        self.assertIn("Agent turn finished", record["args"])
         self.assertEqual(record["args"][-1], "W 1 P 2")
         self.assertNotIn("--action", record["args"])
         self.assertEqual(self.icon(), "✓")
@@ -166,7 +175,7 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         record = self.notification_records()[0]
         self.assertEqual(record["tool"], "terminal-notifier")
         self.assertEqual(record["args"][record["args"].index("-message") + 1], "W 0 P 0")
-        self.assertIn("Agent needs attention", record["args"])
+        self.assertIn("Agent turn finished", record["args"])
         self.assertNotIn("-execute", record["args"])
         self.assertNotIn("-activate", record["args"])
         self.assertEqual(self.icon(), "✓")
@@ -291,7 +300,10 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
                 for name in ("sh", "tmux", "mktemp", "rm", "rmdir"):
                     (tools / name).symlink_to(shutil.which(name))
                 if failure == "mktemp":
-                    (tools / "flock").symlink_to(shutil.which("flock"))
+                    if shutil.which("flock"):
+                        (tools / "flock").symlink_to(shutil.which("flock"))
+                    else:
+                        (tools / "python3").symlink_to(sys.executable)
                     (tools / "mktemp").unlink()
                     (tools / "mktemp").write_text("#!/bin/sh\nexit 1\n")
                     (tools / "mktemp").chmod(0o755)
@@ -525,6 +537,7 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.assertEqual(self.tmux("show-options", "-gqv", "@ai_notifications").strip(), "off")
         self.assertTrue(self.tmux("show-options", "-gqv", "@ai_attention_command").strip())
 
+    @unittest.skipUnless(shutil.which("flock"), "shell-only monitoring needs Linux flock")
     def test_missing_optional_python_or_notifier_preserves_linux_monitoring(self):
         tools = self.directory / "shell-only-tools"
         tools.mkdir()
@@ -956,7 +969,7 @@ sys.exit(result.returncode)
 
     def test_pi_spinner_above_todo_footer_is_detected_without_matching_chat_text(self):
         executable = self.directory / "pi"
-        shutil.copy2(shutil.which("sh"), executable)
+        copy_shell(executable)
         footer = "\n".join(f"footer widget {number}" for number in range(15))
         busy = " ⠴ Working\n" + footer
         idle = "Previous answer mentioned Working...\n" + footer
@@ -971,7 +984,7 @@ sys.exit(result.returncode)
 
     def test_idle_agent_uses_one_text_filter_per_capture(self):
         executable = self.directory / "pi"
-        shutil.copy2(shutil.which("sh"), executable)
+        copy_shell(executable)
         self.tmux("new-window", "-d", "-t", "test",
                   shlex.join([str(executable), "-c", "printf 'Ready\\n'; while IFS= read -r line; do :; done"]))
         wrappers = self.directory / "filters"
@@ -999,7 +1012,7 @@ sys.exit(result.returncode)
         for name, glyph in cases:
             with self.subTest(command=name):
                 executable = self.directory / name
-                shutil.copy2(shutil.which("sh"), executable)
+                copy_shell(executable)
                 body = "while IFS= read -r line; do printf '\\033[2J\\033[H%s\\n' \"$line\"; done"
                 pane = self.tmux("new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "test",
                                  shlex.join([str(executable), "-c", body])).strip()
@@ -1019,7 +1032,7 @@ sys.exit(result.returncode)
 
     def test_claude_footer_ignores_prose_prompts_and_indented_transcripts(self):
         executable = self.directory / "2.1.284"
-        shutil.copy2(shutil.which("sh"), executable)
+        copy_shell(executable)
         idle = "\n".join((
             "Ordinary prose… (with parentheses)",
             "  ✶ Cogitating… (37s · ↓ 1.8k tokens)",
@@ -1046,7 +1059,7 @@ sys.exit(result.returncode)
                 # A renamed shell provides a real foreground process with the
                 # expected command name and synthetic TUI output, without agents.
                 executable = self.directory / name
-                shutil.copy2(shutil.which("sh"), executable)
+                copy_shell(executable)
                 body = f"printf '\\033[2J\\033[H{text}\\n'; while IFS= read -r line; do printf '\\033[2J\\033[H%s\\n' \"$line\"; done"
                 pane = self.tmux("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", self.window,
                                  shlex.join([str(executable), "-c", body])).strip()
@@ -1069,6 +1082,163 @@ sys.exit(result.returncode)
         time.sleep(2.5)
         self.assertNotIn("✓", self.icon())
         self.assertEqual(self.sound_count(), 0)
+
+    def agent_screen(self, command, text, title="Agent"):
+        directory = self.directory / f"agent-{len(list(self.directory.glob('agent-*')))}"
+        directory.mkdir()
+        executable = directory / command
+        copy_shell(executable)
+        screen = directory / "screen"
+        screen.write_text(text + "\n")
+        body = f"while :; do printf '\\033[2J\\033[H'; cat {shlex.quote(str(screen))}; IFS= read -r line || exit; done"
+        pane = self.tmux("new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "test",
+                         shlex.join([str(executable), "-c", body])).strip()
+        self.tmux("select-pane", "-t", pane, "-T", title)
+        self.until(lambda: text.splitlines()[0] in self.tmux("capture-pane", "-p", "-t", pane), "synthetic agent screen")
+        return pane, screen
+
+    def redraw_agent(self, pane, screen, text):
+        screen.write_text(text + "\n")
+        self.tmux("send-keys", "-t", pane, "Enter")
+
+    def test_agent_prompts_show_needs_input_instead_of_done_or_working(self):
+        cases = (
+            ("2.1.290", "Agent", "Do you want to proceed?\n❯ 1. Yes\n  2. No\nEsc to cancel"),
+            ("2.1.290", "Agent", "Do you want to make this edit to app.ts?\n❯ 1. Yes\n2. Yes, allow all edits\n3. No\nEsc to cancel · Tab to amend"),
+            ("claude", "Agent", "Do you want to create app.ts?\n❯ 1. Yes\n2. No\nEsc to cancel"),
+            ("claude", "Agent", "Would you like to proceed?\n❯ 1. Yes, and auto-accept edits\n2. No\nEsc to cancel"),
+            ("claude", "Agent", "Which framework?\n❯ React\nEnter to select · Arrow keys to navigate · Esc to cancel"),
+            ("codex", "⠋ Agent", "Would you like to run the following command?\n› 1. Yes, proceed (y)\n2. No (esc)\nPress enter to confirm or esc to cancel"),
+            ("codex", "Agent", "Which framework?\n› 1. React\nenter to submit answer · esc to cancel"),
+            ("pi", "Agent", "⠴ Working\nApprove command?\n→ Yes\n↑↓ navigate  enter select  escape cancel"),
+            ("pi", "Agent", "⠴ Working\n──────────────────\nYour answer\nenter submit  escape cancel\n──────────────────"),
+            ("pi", "Agent", "⠴ Working\n● Approve command?\n→ 1. Allow once\n  2. Deny\n1-9 select · ↑↓ move · enter confirm · tab add note · esc cancel"),
+            ("pi", "Agent", "⠴ Working\n● Approve command?\n→ 1. Allow once, with a note\n  2. Deny\nenter submit · esc discard note · tab back"),
+            ("pi", "Agent", "⠴ Working\n● Approve command?\n→ 1. Allow once\n1-9 select · ↑↓ move · enter confirm · tab add note ·\nesc cancel"),
+            ("zsh", "π - project", "⠴ Working\nWhich framework?\n❯ 1. React\nEsc cancel · ↑↓ choose · Enter select"),
+            ("pi", "Agent", "⠴ Working\n──────────────────\nQuestion\nA typed answer\nCtrl+C cancel · Esc back · Enter save\n──────────────────"),
+            ("pi", "Agent", "⠴ Working\nReview your answers\nFramework: React\nEnter to submit all answers\nEsc cancel · ↑↓ choose · Enter select"),
+            ("codex", "Action Required", "Command needs approval"),
+            ("node", "Action Required", "Command needs approval"),
+            ("node", "Agent", "Which framework?\n› 1. React\nenter to submit answer · esc to cancel"),
+            ("claude", "Agent", 'MCP server "docs" requests your input\n❯ Accept\nDecline\nEsc to cancel'),
+        )
+        self.start_daemon()
+        for command, title, prompt in cases:
+            with self.subTest(command=command, prompt=prompt):
+                pane, screen = self.agent_screen(command, prompt, title)
+                self.until(lambda: self.icon(target=pane) == "!", "needs input")
+                self.assertEqual(self.icon("session"), "!")
+                self.assertEqual(self.tmux("show-options", "-pqv", "-t", pane, "@ai_attention_state").strip(), "blocked")
+                self.tmux("kill-pane", "-t", pane)
+                self.until(lambda: self.icon("session") == "", "closed prompt cleared")
+
+    def test_blocked_agent_can_resume_finish_and_notify_with_distinct_titles(self):
+        env = self.notification_tools()
+        pane, screen = self.agent_screen("pi", "⠴ Working")
+        self.start_daemon(env)
+        self.until(lambda: bool(self.icon(target=pane)), "working")
+        prompt = "⠴ Working\nApprove command?\n→ Yes\n↑↓ navigate  enter select  escape cancel"
+        self.redraw_agent(pane, screen, prompt)
+        self.until(lambda: self.icon(target=pane) == "!" and len(self.notification_records()) == 1, "blocked notification")
+        self.assertIn("Agent needs input", self.notification_records()[0]["args"])
+        self.start_daemon(env)
+        time.sleep(1.5)
+        self.assertEqual(len(self.notification_records()), 1)
+        self.redraw_agent(pane, screen, "⠴ Working")
+        self.until(lambda: bool(self.icon(target=pane)) and "!" not in self.icon(target=pane), "resumed")
+        self.redraw_agent(pane, screen, "Ready")
+        self.until(lambda: self.icon(target=pane) == "✓" and len(self.notification_records()) == 2, "finished notification")
+        self.assertIn("Agent turn finished", self.notification_records()[1]["args"])
+        self.assertEqual(self.sound_count(), 2)
+
+    def test_viewing_a_blocked_window_acknowledges_all_its_panes(self):
+        pane, screen = self.agent_screen("pi", "Approve command?\n→ Yes\n↑↓ navigate  enter select  escape cancel")
+        other = self.tmux("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", pane, "sleep 300").strip()
+        self.tmux("select-pane", "-t", other)
+        self.tmux("resize-pane", "-Z", "-t", other)
+        self.attach()
+        self.start_daemon()
+        self.until(lambda: self.icon(target=pane) == "!", "unseen window needs input")
+        self.tmux("select-window", "-t", pane)
+        self.until(lambda: self.icon(target=pane) == "", "whole window acknowledged even while zoomed")
+        self.assertEqual(self.tmux("show-options", "-pqv", "-t", pane, "@ai_attention_state").strip(), "blocked-seen")
+        time.sleep(2)
+        self.assertEqual(self.sound_count(), 1)
+        self.assertEqual(self.icon("session"), "")
+
+    def test_mac_blocked_notification_can_focus_its_acknowledged_pane(self):
+        env = self.notification_tools("Darwin")
+        env["AI_TEST_TERMINAL_ID"] = "ghostty-terminal-123"
+        self.env.update(env)
+        self.env["TERM"] = "xterm-ghostty"
+        pane, screen = self.agent_screen("pi", "Approve command?\n→ Yes\n↑↓ navigate  enter select  escape cancel")
+        self.attach()
+        self.start_daemon(env)
+        self.until(lambda: any(record["tool"] == "terminal-notifier" for record in self.notification_records()), "blocked Mac popup")
+        record = next(record for record in self.notification_records() if record["tool"] == "terminal-notifier")
+        self.assertIn("Agent needs input", record["args"])
+        callback = record["args"][record["args"].index("-execute") + 1]
+        self.tmux("select-window", "-t", pane)
+        self.until(lambda: self.tmux("show-options", "-pqv", "-t", pane, "@ai_attention_state").strip() == "blocked-seen", "acknowledged prompt")
+        self.tmux("select-window", "-t", self.window)
+        subprocess.run(["sh", "-c", callback], env=self.env, check=True, timeout=10)
+        self.assertEqual(self.tmux("list-clients", "-F", "#{pane_id}").strip(), pane)
+
+    def test_blocked_redraw_does_not_notify_again_and_dismissal_can_finish(self):
+        pane, screen = self.agent_screen("pi", "Approve command?\n→ Yes\n↑↓ navigate  enter select  escape cancel")
+        self.start_daemon()
+        self.until(lambda: self.icon(target=pane) == "!", "blocked")
+        self.redraw_agent(pane, screen, "Redrawing")
+        self.until(lambda: self.tmux("show-options", "-pqv", "-t", pane, "@ai_attention_state").strip() == "blocked-quiet1", "first quiet sample")
+        self.redraw_agent(pane, screen, "Approve command?\n→ Yes\n↑↓ navigate  enter select  escape cancel")
+        self.until(lambda: self.tmux("show-options", "-pqv", "-t", pane, "@ai_attention_state").strip() == "blocked", "prompt restored")
+        self.assertEqual(self.sound_count(), 1)
+        self.redraw_agent(pane, screen, "Ready")
+        self.until(lambda: self.icon(target=pane) == "✓", "dismissed turn stopped")
+        self.assertEqual(self.sound_count(), 2)
+
+    def test_stale_prompts_and_conversation_text_do_not_mark_needs_input(self):
+        cases = (
+            ("claude", "Do you want to proceed?\n❯ 1. Yes\n2. No\nEsc to cancel\n❯"),
+            ("claude", "The docs mention Enter to confirm and Esc to cancel.\n❯"),
+            ("claude", "Usage statistics\nEsc to cancel"),
+            ("codex", "Press enter to confirm or esc to cancel\n›"),
+            ("claude", "Example footer text:\nEnter to confirm · Esc to cancel\n❯ I am typing the next request"),
+            ("codex", "Press enter to confirm or esc to cancel\n› I am typing the next request"),
+            ("claude", "Example footer text:\nEnter to confirm · Esc to cancel"),
+            ("codex", "Example footer text:\nPress enter to confirm or esc to cancel"),
+            ("pi", "Example footer text:\n↑↓ navigate  enter select  escape cancel\n⠴ Working"),
+            ("pi", "Example footer text:\n↑↓ navigate  enter select  escape cancel\nReady"),
+            ("pi", "An example approval dialog:\n→ 1. Yes\n↑↓ navigate  enter select  escape cancel\n──── ⠴ Working ────"),
+            ("pi", "A question asks whether to proceed. Yes is an option.\nReady"),
+            ("pi", "Previous answer mentioned Working...\nReady"),
+        )
+        self.start_daemon()
+        panes = [self.agent_screen(command, screen)[0] for command, screen in cases]
+        self.until(lambda: "@ai_spinner_s" in self.tmux("show-options", "-t", self.session), "scan")
+        time.sleep(3)
+        for pane in panes:
+            self.assertNotIn("!", self.icon(target=pane))
+        self.assertEqual(self.sound_count(), 0)
+
+    def test_window_and_picker_can_show_done_blocked_and_working_together(self):
+        pane, screen = self.agent_screen("pi", "Approve command?\n→ Yes\n↑↓ navigate  enter select  escape cancel")
+        done = self.tmux("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", pane, "sleep 300").strip()
+        working = self.tmux("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", pane, "sleep 300").strip()
+        self.tmux("set-option", "-p", "-t", done, "@ai_attention_state", "done")
+        self.working(working)
+        self.start_daemon()
+        self.until(lambda: self.icon(target=pane).startswith("! ✓ "), "all window states visible")
+        self.assertTrue(self.icon("session").startswith("! ✓ "))
+        indicator = next(shlex.split(line)[3] for line in CONFIG.read_text().splitlines()
+                         if line.startswith("set -g @ai_pane_indicator "))
+        self.tmux("set-option", "-g", "@ai_pane_indicator", indicator)
+        self.assertEqual(self.tmux("display-message", "-p", "-t", pane, "#{E:@ai_pane_indicator}").strip(), "!")
+        self.assertEqual(self.tmux("display-message", "-p", "-t", done, "#{E:@ai_pane_indicator}").strip(), "✓")
+        self.assertTrue(self.tmux("display-message", "-p", "-t", working, "#{E:@ai_pane_indicator}").strip())
+        self.tmux("set-option", "-p", "-t", pane, "@ai_attention_state", "blocked-seen")
+        self.assertEqual(self.tmux("display-message", "-p", "-t", pane, "#{E:@ai_pane_indicator}").strip(), "")
 
 
 if __name__ == "__main__":
