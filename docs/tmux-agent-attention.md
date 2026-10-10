@@ -58,8 +58,7 @@ running monitor in place. Its empty `<socket>.ai-spinner.lock` file is
 intentionally retained to keep concurrent waiters on the same inode. A pane's
 window membership is checked inside tmux when persisting a transition, so moving
 it mid-scan cannot acknowledge its old window. Aggregation can lag until the next
-scan. Destroying/restarting the tmux server does not preserve attention;
-tmux-resurrect does not restore these options.
+scan. Destroying/restarting the tmux server does not preserve attention.
 
 This is heuristic monitoring, not lifecycle hooks. Very short work between scans
 can be missed; changing an agent's UI wording can break detection. An unrecognized
