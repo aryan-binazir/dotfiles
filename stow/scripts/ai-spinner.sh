@@ -1,8 +1,4 @@
 #!/bin/sh
-# Agent detection is deliberately heuristic: ✓ means "check this agent", not
-# success. Keep the existing title/text detection and 250ms spinner animation.
-# Pane attention lives in tmux options, so config/daemon reloads do not lose it.
-
 # Pin every command (including background scans) to the starting server.
 socket=$(tmux display-message -p '#{socket_path}') || exit 1
 tmux() { command tmux -S "$socket" "$@"; }
@@ -51,7 +47,7 @@ fi
 f0=⡇ f1=⠏ f2=⠛ f3=⠹ f4=⢸ f5=⣰ f6=⣤ f7=⣆
 b0=$(printf '\342\240') b1=$(printf '\342\241')
 b2=$(printf '\342\242') b3=$(printf '\342\243')
-working="" working_s="" done_w="" done_s="" windows="" sessions="" clients=""
+working="" working_s="" done_w="" done_s="" blocked_w="" blocked_s="" windows="" sessions="" clients=""
 notify_script=""
 if command -v python3 >/dev/null 2>&1; then
     notify_script=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().with_name("tmux-agent-notify"))' "$0")
@@ -60,33 +56,95 @@ fi
 scan_panes() {
     pane_rows=$(tmux list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{pane_current_command}|#{pane_title}') || return 1
     while IFS='|' read -r sess win pane cmd title; do
-        w=0
+        w=0 title_busy=0 agent=$cmd
         case $title in
-        "$b0"* | "$b1"* | "$b2"* | "$b3"*) w=1 ;;
-        *)
-            case $cmd in
+        "$b0"* | "$b1"* | "$b2"* | "$b3"* | ◐* | ◑* | ◒* | ◓*) w=1 title_busy=1 ;;
+        esac
+        case $title in 'π - '*) agent=pi ;; esac
+        case $agent in
             codex* | node | bun | uv | pi | cursor-agent | claude | [0-9]*.[0-9]*.[0-9]*)
+                case $agent:$title in codex*:*'Action Required'* | node:*'Action Required'* | bun:*'Action Required'*)
+                    printf '%s|%s|%s|blocked\n' "$sess" "$win" "$pane"
+                    continue ;;
+                esac
                 content=$(tmux capture-pane -p -t "$pane" 2>/dev/null) || { printf '%s|%s|%s|unknown\n' "$sess" "$win" "$pane"; continue; }
-                # One filter handles Pi's standalone status above tall footers
-                # and the legacy last-eight-nonempty-lines detector. C locale
-                # makes '.' consume the third UTF-8 byte of a braille glyph.
-                printf '%s\n' "$content" | LC_ALL=C awk -v braille="$b0|$b1|$b2|$b3" -v command="$cmd" '
+                # C locale makes '.' consume the third UTF-8 byte of a braille glyph.
+                w=$(printf '%s\n' "$content" | LC_ALL=C awk -v braille="$b0|$b1|$b2|$b3" -v command="$agent" -v title_busy="$title_busy" '
                     BEGIN {
                         pi = "^[[:space:]]*(" braille "). Working([.][.][.])?[[:space:]]*$"
                         native = (command ~ /^(claude|[0-9]+[.][0-9]+[.][0-9]+)$/)
                         claude = (native || command == "node" || command == "bun")
+                        codex = (command ~ /^codex/ || command == "node" || command == "bun")
+                        is_pi = (command == "pi" || command == "node" || command == "bun" || command == "uv")
+                    }
+                    {
+                        line = tolower($0)
+                        gsub(/ |│|┃/, " ", line)
+                        sub(/^[[:space:]]+/, "", line)
+                        sub(/[[:space:]]+$/, "", line)
+                        if (line ~ /^(❯|›)([[:space:]]|$)/ &&
+                            line !~ /^(❯|›)[[:space:]]*[0-9]+[.][[:space:]]/ &&
+                            line !~ /^(❯|›)[[:space:]]*(accept|decline)([^a-z]|$)/) {
+                            cancel = confirm = select_hint = options = question = mcp = accept = 0
+                            last_prompt = n + 1
+                        }
+                        if (line != "") {
+                            n++
+                            screen[(n - 1) % 20] = line
+                            position[(n - 1) % 20] = n
+                            if (line ~ /^(❯|›|→)[[:space:]]*[^[:space:]]/) selected = n
+                            if (line ~ /^(╭|┌|┏)?(─|━)(─|━)(─|━)/) border = n
+                            if (line == "review your answers") review = n
+                            if (is_pi && (selected > 0 && selected > n - 20 || border > 0 && border > n - 20 || review > 0 && review > n - 20)) {
+                                if (line ~ /^(↑↓ navigate|enter submit|esc cancel · ↑↓ choose|ctrl\+c cancel · esc back|enter to submit all answers|1-9 select|space\/1-9 toggle|space toggle|↑↓ move)/) {
+                                    pi_hint = line
+                                    hint_start = n
+                                } else if (hint_start && n <= hint_start + 2) pi_hint = pi_hint " " line
+                                if (hint_start > selected && hint_start > border && hint_start > review &&
+                                    (pi_hint ~ /^↑↓ navigate[[:space:]]+enter select[[:space:]]+(escape|esc|ctrl\+c).*cancel/ ||
+                                     pi_hint ~ /^enter submit[[:space:]].*(escape|esc|ctrl\+c).*cancel/ ||
+                                     pi_hint ~ /^esc cancel · ↑↓ choose · enter select/ ||
+                                     pi_hint == "ctrl+c cancel · esc back · enter save" ||
+                                     pi_hint == "enter to submit all answers" ||
+                                     (pi_hint ~ /↑↓ move · enter confirm/ && pi_hint ~ /· esc cancel/) ||
+                                     pi_hint == "enter submit · esc discard note · tab back")) pi_blocked = n
+                            }
+                            if (line ~ /(^|[[:space:]·])esc to cancel([[:space:]·]|$)/) cancel = n
+                            if (line ~ /(^|[[:space:]·])enter to confirm([[:space:]·]|$)/) confirm = n
+                            if (line ~ /enter to select/ && line ~ /navigate/) select_hint = n
+                            if (line ~ /^(❯|›)?[[:space:]]*[123][.][[:space:]]+(yes|no)([^a-z]|$)/) options = n
+                            if (line ~ /^(do you want to|would you like to) /) question = n
+                            if (line ~ /^mcp server .+ requests your input$/) mcp = n
+                            if (line ~ /^(❯)?[[:space:]]*(accept|decline)([^a-z]|$)/) accept = n
+                        }
                     }
                     claude && /^(·|✢|✳|✶|✻|✽|[*]) [A-Za-z]+…([[:space:]]+[(][0-9]+[smh]([[:space:]]|[)])|[[:space:]]*$)/ { found = 1 }
-                    !native && $0 ~ pi { found = 1 }
-                    !native && NF { recent[n++ % 8] = ($0 ~ /[Ee]sc to interrupt|[Cc]trl[+][Cc] to stop|(^|[[:space:]])Working([.][.][.])?([[:space:]]|$)/) }
-                    END {
-                        if (found) exit 0
-                        for (i in recent) if (recent[i]) exit 0
-                        exit 1
+                    !native && $0 ~ pi { found = 1; last_working = n }
+                    !native && NF {
+                        busy_line = ($0 ~ /[Ee]sc to interrupt|[Cc]trl[+][Cc] to stop|(^|[[:space:]])Working([.][.][.])?([[:space:]]|$)/)
+                        recent[recent_n++ % 8] = busy_line
+                        if (busy_line) last_working = n
                     }
-                ' && w=1 ;;
-            esac
-            ;;
+                    END {
+                        live = n - 20
+                        blocked = (claude && cancel > live && cancel > 0 &&
+                            (((confirm > live && confirm > 0) || (select_hint > live && select_hint > 0)) && selected > live && selected > 0 ||
+                             (question > live && question > 0 && options > live && options > 0) ||
+                             (mcp > live && mcp > 0 && accept > live && accept > 0)))
+                        if (is_pi && pi_blocked > live && pi_blocked > last_working && pi_blocked > last_prompt) blocked = 1
+                        for (i in screen) {
+                            if (position[i] <= last_prompt) continue
+                            line = screen[i]
+                            if (codex && (selected > live && selected > 0 || border > live && border > 0) &&
+                                (line == "press enter to confirm or esc to cancel" ||
+                                line ~ /(^|[[:space:]·])enter to submit (answer|all)([[:space:]·]|$)/)) blocked = 1
+                        }
+                        if (blocked) { print "blocked"; exit }
+                        if (found || title_busy) { print 1; exit }
+                        for (i in recent) if (recent[i]) { print 1; exit }
+                        print 0
+                    }
+                ') ;;
         esac
         printf '%s|%s|%s|%s\n' "$sess" "$win" "$pane" "$w"
     done <<EOF
@@ -115,7 +173,7 @@ apply_scan() {
     fi
     # One snapshot avoids a fresh tmux process for every pane on every scan.
     pane_states=$(tmux list-panes -a -F '|#{pane_id}=#{@ai_attention_state}|') || return
-    working="" working_s="" done_w="" done_s=""
+    working="" working_s="" done_w="" done_s="" blocked_w="" blocked_s=""
     windows=$(tmux list-windows -a -F '#{window_id}' | sort -u)
     sessions=$(tmux list-sessions -F '#{session_id}')
     clients="" viewed=""
@@ -152,21 +210,36 @@ EOF
         previous=${entry%%|*}
         state=$previous
         case $busy in
+        blocked)
+            case $previous in
+            blocked-seen*) state=blocked-seen ;;
+            *) state=blocked ;;
+            esac ;;
         1) state=working ;;
-        # Three quiet observations, about two seconds apart from first to last,
-        # avoid treating a single redraw as completion. Persist the debounce too.
         0)
             case $previous in
             working) state=quiet1 ;;
             quiet1) state=quiet2 ;;
             quiet2) state=done ;;
+            blocked | blocked-seen) state=$previous-quiet1 ;;
+            blocked-quiet1 | blocked-seen-quiet1) state=${previous%1}2 ;;
+            blocked-quiet2 | blocked-seen-quiet2) state=done ;;
             esac ;;
         esac
         completed=0
-        if [ "$state" = done ]; then
+        case $state in
+        blocked)
+            case $previous in blocked*) ;; *) completed=1 ;; esac ;;
+        done)
             [ "$previous" = done ] || completed=1
-            case " $viewed " in *" $win "*) state="" ;; esac
-        fi
+            ;;
+        esac
+        case " $viewed " in *" $win "*)
+            case $state in
+            done) state="" ;;
+            blocked | blocked-quiet1 | blocked-quiet2) state=blocked-seen${state#blocked} ;;
+            esac ;;
+        esac
         if [ "$state" != "$previous" ]; then
             # A pane can move after the async sample. Check membership and
             # persist together in tmux, never acknowledging its old window.
@@ -179,9 +252,9 @@ EOF
                 'display-message -p moved' 2>/dev/null) || continue
             [ "$applied" = applied ] || continue
             [ "$completed" = 0 ] || notify=1
-            if [ "$completed" = 1 ] && [ "$state" = done ]; then
-                notify_panes="$notify_panes $pane"
-            fi
+            case $completed:$state in
+            1:done | 1:blocked) notify_panes="$notify_panes $pane" ;;
+            esac
         fi
         processed_states="$processed_states|$pane=$state|"
         case $state in
@@ -191,6 +264,9 @@ EOF
         done)
             case " $done_w " in *" $win "*) ;; *) done_w="$done_w $win" ;; esac
             case " $done_s " in *" $sess "*) ;; *) done_s="$done_s $sess" ;; esac ;;
+        blocked | blocked-quiet1 | blocked-quiet2)
+            case " $blocked_w " in *" $win "*) ;; *) blocked_w="$blocked_w $win" ;; esac
+            case " $blocked_s " in *" $sess "*) ;; *) blocked_s="$blocked_s $sess" ;; esac ;;
         esac
     done < "$scan_result"
     if [ "$notify" = 1 ]; then
@@ -236,7 +312,8 @@ while :; do
     # publish changes, and queue a complete frame in one tmux command batch.
     for wnd in $windows; do
         icon=""
-        case " $done_w " in *" $wnd "*) icon=" ✓" ;; esac
+        case " $blocked_w " in *" $wnd "*) icon=" !" ;; esac
+        case " $done_w " in *" $wnd "*) icon="$icon ✓" ;; esac
         case " $working " in *" $wnd "*) icon="$icon #{TMUX_AI_SPINNER_FRAME}" ;; esac
         key="w:$wnd=$icon;"
         next_rendered="$next_rendered$key"
@@ -246,7 +323,8 @@ while :; do
     done
     for sess in $sessions; do
         icon=""
-        case " $done_s " in *" $sess "*) icon="✓" ;; esac
+        case " $blocked_s " in *" $sess "*) icon="!" ;; esac
+        case " $done_s " in *" $sess "*) icon="${icon:+$icon }✓" ;; esac
         case " $working_s " in *" $sess "*) icon="${icon:+$icon }#{TMUX_AI_SPINNER_FRAME}" ;; esac
         key="s:$sess=$icon;"
         next_rendered="$next_rendered$key"

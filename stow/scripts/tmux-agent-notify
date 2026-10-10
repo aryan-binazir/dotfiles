@@ -89,12 +89,12 @@ def click(target):
         return
     pid, session, window, state, event, linked = run(tmux, "-S", socket, "display-message", "-p", "-t", pane,
         "#{pane_pid}\t#{session_id}\t#{window_id}\t#{@ai_attention_state}\t#{@ai_attention_event}\t#{window_linked}").split("\t")
-    if (pid != target["pane_pid"] or state not in ("", "done") or event != target["event"]
+    if (pid != target["pane_pid"] or state not in ("", "done", "blocked", "blocked-seen", "blocked-quiet1", "blocked-quiet2", "blocked-seen-quiet1", "blocked-seen-quiet2") or event != target["event"]
             or session != target["session"] or linked != "0"):
         return
     if run(target["osascript"], "-", target["client"]["client_name"], target["terminal"], input=FOCUS_TERMINAL) != "focused":
         return
-    condition = "#{||:#{==:#{@ai_attention_state},done},#{==:#{@ai_attention_state},}}"
+    condition = "#{m/r:^(done|blocked(-seen)?(-quiet[12])?)?$,#{@ai_attention_state}}"
     for name, expected in (("session_attached", "1"), ("pid", target["server"]), ("pane_pid", pid),
                            ("session_id", session), ("window_id", window), ("window_linked", "0"),
                            ("@ai_attention_event", event)):
@@ -107,20 +107,24 @@ def click(target):
 def pending_attention(socket, pane, event):
     state, current_event = run("tmux", "-S", socket, "display-message", "-p", "-t", pane,
                                "#{@ai_attention_state}|#{@ai_attention_event}").split("|")
-    return (state == "done" and (event is None or current_event == event)
-            and run("tmux", "-S", socket, "show-options", "-gqv", "@ai_notifications") != "off")
+    if (state in ("done", "blocked", "blocked-quiet1", "blocked-quiet2") and (event is None or current_event == event)
+            and run("tmux", "-S", socket, "show-options", "-gqv", "@ai_notifications") != "off"):
+        return state
+    return None
 
 
 def notify(socket, pane, event=None):
-    if not pending_attention(socket, pane, event):
+    state = pending_attention(socket, pane, event)
+    if not state:
         return
     label = run("tmux", "-S", socket, "display-message", "-p", "-t", pane,
                 "W #{window_index} P #{pane_index}")
     label = " ".join(label.split())[:240]
+    title = "Agent needs input" if state.startswith("blocked") else "Agent turn finished"
     platform = run("uname", "-s")
     if platform == "Linux":
         run("notify-send", "--app-name=tmux", "--hint=boolean:suppress-sound:true",
-            "--", "Agent needs attention", html.escape(label))
+            "--", title, html.escape(label))
     elif platform == "Darwin":
         if shutil.which("terminal-notifier"):
             target = None
@@ -130,13 +134,13 @@ def notify(socket, pane, event=None):
                 pass
             if not pending_attention(socket, pane, target["event"] if target else event):
                 return
-            args = ["terminal-notifier", "-title", "Agent needs attention", "-message", label]
+            args = ["terminal-notifier", "-title", title, "-message", label]
             if target:
                 callback = shlex.join([sys.executable, str(Path(__file__).resolve()), "click", json.dumps(target)])
                 args.extend(["-execute", callback])
             run(*args, timeout=None)
         else:
-            run("osascript", "-", "Agent needs attention", label,
+            run("osascript", "-", title, label,
                 input='on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv)\nend run')
 
 
