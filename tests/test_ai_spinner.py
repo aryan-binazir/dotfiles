@@ -165,7 +165,7 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.assertEqual(self.icon(), "✓")
         self.assertEqual(self.sound_count(), 1)
 
-    def test_macos_completion_without_an_exact_terminal_uses_an_informational_notification(self):
+    def test_macos_completion_without_an_exact_terminal_offers_ghostty_activation(self):
         env = self.notification_tools("Darwin")
         self.working()
         self.start_daemon(env)
@@ -177,7 +177,7 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.assertEqual(record["args"][record["args"].index("-message") + 1], "W 0 P 0")
         self.assertIn("Agent turn finished", record["args"])
         self.assertNotIn("-execute", record["args"])
-        self.assertNotIn("-activate", record["args"])
+        self.assertEqual(record["args"][record["args"].index("-activate") + 1], "com.mitchellh.ghostty")
         self.assertEqual(self.icon(), "✓")
 
     def test_foreground_completion_has_sound_without_a_desktop_popup(self):
@@ -251,6 +251,7 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.until(lambda: any(record["tool"] == "terminal-notifier" for record in self.notification_records()), "mac popup", timeout=timeout)
         record = next(record for record in self.notification_records() if record["tool"] == "terminal-notifier")
         self.assertIn("-execute", record["args"])
+        self.assertNotIn("-activate", record["args"])
         return record["args"][record["args"].index("-execute") + 1]
 
     def test_mac_permission_prompts_can_wait_longer_than_five_seconds(self):
@@ -380,7 +381,7 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.assertEqual(self.sound_count(), 1)
         self.assertEqual(self.icon(), "✓")
 
-    def test_unsupported_tmux_client_lookup_keeps_mac_popup_informational(self):
+    def test_unsupported_tmux_client_lookup_offers_ghostty_activation(self):
         env = self.notification_tools("Darwin")
         env["AI_TEST_TERMINAL_ID"] = "ghostty-terminal-123"
         real_tmux = shutil.which("tmux", path=self.env["PATH"])
@@ -404,7 +405,7 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.assertNotIn("-execute", popup["args"])
         self.assertEqual(self.icon(), "✓")
 
-    def test_shared_session_does_not_offer_mac_click_navigation(self):
+    def test_shared_session_does_not_offer_exact_mac_click_navigation(self):
         env = self.notification_tools("Darwin")
         env["AI_TEST_TERMINAL_ID"] = "ghostty-terminal-123"
         self.env.update(env)
@@ -492,7 +493,7 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.assertEqual(self.tmux("list-clients", "-F", "#{pane_id}").strip(), self.pane)
         self.assertFalse(marker.exists())
 
-    def test_older_ghostty_api_keeps_mac_notification_informational(self):
+    def test_older_ghostty_api_offers_app_activation(self):
         env = self.notification_tools("Darwin")
         env["AI_TEST_LOOKUP_EXIT"] = "1"
         self.env.update(env)
@@ -506,6 +507,7 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.until(lambda: any(row["tool"] == "terminal-notifier" for row in self.notification_records()), "legacy API fallback")
         popup = next(row for row in self.notification_records() if row["tool"] == "terminal-notifier")
         self.assertNotIn("-execute", popup["args"])
+        self.assertEqual(popup["args"][popup["args"].index("-activate") + 1], "com.mitchellh.ghostty")
         self.assertEqual(self.icon(), "✓")
 
     def test_notification_backend_does_not_hold_the_daemon_handover_lock(self):
@@ -856,17 +858,33 @@ sys.exit(result.returncode)
         screen = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", self.output.decode(errors="replace"))
         self.assertRegex(screen, r"agent[^\r\n]*✓[^\r\n]*panes", screen)
 
-    def test_prefix_w_shows_window_attention(self):
+    def test_prefix_w_preserves_collapsed_windows_and_prefix_W_expands_all_panes(self):
         config = self.directory / "window-picker.conf"
-        config.write_text("\n".join(line for line in CONFIG.read_text().splitlines() if line.startswith("bind w ")) + "\n")
+        config.write_text("\n".join(line for line in CONFIG.read_text().splitlines()
+                                    if line.startswith(("bind w ", "bind W "))) + "\n")
         self.tmux("source-file", str(config))
         self.tmux("rename-window", "-t", self.window, "agent")
         self.tmux("set-option", "-w", "-t", self.window, "@ai_spinner", " ✓")
+        self.tmux("select-pane", "-t", self.pane, "-T", "first-agent")
+        sibling = self.tmux("split-window", "-d", "-P", "-F", "#{pane_id}", "sleep 300").strip()
+        self.tmux("select-pane", "-t", sibling, "-T", "second-agent")
+        other = self.tmux("new-session", "-d", "-s", "other", "-P", "-F", "#{pane_id}", "sleep 300").strip()
+        self.tmux("select-pane", "-t", other, "-T", "third-agent")
+        self.tmux("select-pane", "-t", self.pane)
+        self.tmux("set-option", "-g", "status", "off")
         master = self.attach()
-        os.write(master, b"\x02w")
-        self.until(lambda: "sort:" in self.output.decode(errors="replace"), "window picker")
-        screen = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", self.output.decode(errors="replace"))
-        self.assertRegex(screen, r"agent[^\r\n]*✓", screen)
+        for key, expanded in ((b"w", False), (b"W", True)):
+            with self.subTest(key=key):
+                self.output.clear()
+                os.write(master, b"\x02" + key)
+                self.until(lambda: "sort:" in self.output.decode(errors="replace"), "window picker")
+                screen = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", self.output.decode(errors="replace"))
+                self.assertRegex(screen, r"agent[^\r\n]*✓", screen)
+                for title in ("first-agent", "second-agent", "third-agent"):
+                    self.assertEqual(f'"{title}"' in screen, expanded, screen)
+                self.tmux("send-keys", "-t", self.pane, "q")
+                self.until(lambda: self.tmux("display-message", "-p", "-t", self.pane,
+                                            "#{pane_in_mode}").strip() == "0", "picker closed")
 
     def test_sound_default_reloads_cleanly_and_preserves_mute(self):
         config = self.directory / "sound-reload.conf"

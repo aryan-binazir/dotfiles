@@ -138,6 +138,8 @@ def notify(socket, pane, event=None):
             if target:
                 callback = shlex.join([sys.executable, str(Path(__file__).resolve()), "click", json.dumps(target)])
                 args.extend(["-execute", callback])
+            else:
+                args.extend(["-activate", "com.mitchellh.ghostty"])
             run(*args, timeout=None)
         else:
             run("osascript", "-", title, label,

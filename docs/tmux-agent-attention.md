@@ -15,6 +15,9 @@
 
 Window tabs, `prefix s` session and expanded window rows, and `prefix w` use the
 same indicators. Expanded pane rows distinguish the individual agents too.
+`prefix w` opens with windows collapsed. `prefix W` opens with every session and
+window expanded, showing individual panes.
+Inside either picker, `Alt` + `+` expands all items and `Alt` + `-` collapses them.
 Stable option values refer to a shared hidden environment
 variable for the animation frame; consumers expand them with `#{E:@ai_spinner}`
 or `#{E:@ai_spinner_s}`. Frame updates use status-only refreshes, not option writes
@@ -102,17 +105,19 @@ delivery; resumed or acknowledged work and superseded events are suppressed.
 | Platform | Delivery | Click navigation |
 | --- | --- | --- |
 | Linux | `notify-send`, including from non-Ghostty terminals | Informational only. Ghostty 1.3.1 does not provide reliable external window/tab targeting. |
-| macOS with `terminal-notifier` | Native notification | Available only when Ghostty exposes terminal tty lookup and exactly one terminal matches the sole tmux client attached to that session. |
+| macOS with `terminal-notifier` | Native notification | Selects the exact pane when Ghostty tty lookup identifies the sole attached client; otherwise brings Ghostty forward. |
 | macOS without `terminal-notifier` | `osascript display notification` | Informational only. |
 
 Ghostty 1.3.1's macOS AppleScript dictionary lacks tty lookup. Newer builds may
 provide it; the helper probes the running API rather than relying on a version
 number. Unsupported APIs, non-Ghostty clients, shared sessions, linked windows,
-and ambiguous matches receive an informational popup without an activation action.
+and ambiguous matches receive a popup that activates Ghostty without selecting a
+tmux session or pane. Ghostty is the fallback app even for detached sessions or
+clients in other terminals.
 No notification helper is installed automatically. On macOS, notification and
 Ghostty Automation permissions are controlled by the OS.
 
-A supported click focuses the matched Ghostty terminal and selects the exact tmux
+An exact-target click focuses the matched Ghostty terminal and selects the exact tmux
 pane. It rechecks the server, completion identity, client attachment, live pane
 membership, and Ghostty terminal before navigating. Old notifications cannot
 navigate to a later completion or a closed pane. A moved pane is followed only
@@ -189,10 +194,11 @@ delivery, AppleScript permissions, and Ghostty focus still need a desktop smoke 
 
 For a Mac smoke check, use a private tmux socket in Ghostty with these scripts.
 Run synthetic work in a background window, then confirm one native popup and an
-unread check. Verify informational behavior on Ghostty 1.3.1; on a build with tty
+unread check. Verify that clicking brings Ghostty forward on Ghostty 1.3.1; on a build with tty
 lookup and `terminal-notifier`, click and confirm the exact window/tab and pane.
-Repeat with two clients sharing the session and with the target pane closed;
-those cases must not navigate. Disable popups and confirm the check still works.
+Repeat with two clients sharing the session; the click should activate Ghostty
+without switching tmux panes. Close the target pane after receiving an exact-target
+notification and confirm its click does nothing. Disable popups and confirm the check still works.
 Stop that private server when finished.
 
 A worktree checkout does **not** update existing Stow links: verify their actual
