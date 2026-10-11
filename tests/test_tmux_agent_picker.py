@@ -130,6 +130,27 @@ class PickerTest(unittest.TestCase):
             args += ['--client', client]
         return subprocess.run(args, env=self.env, text=True, capture_output=True, check=True, timeout=5).stdout
 
+    def test_config_restores_terminal_colors_after_gray_popup_defaults(self):
+        options = ('popup-style', 'popup-border-style', 'tree-mode-border-style')
+        supported = []
+        for option in options:
+            result = subprocess.run(['tmux', '-S', self.socket, 'show-options', '-gw', option],
+                                    env=self.env, capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                supported.append(option)
+                self.tmux('set-option', '-gw', option, 'fg=white,bg=colour243')
+        config = self.directory / 'colors.conf'
+        config.write_text('\n'.join(line for line in CONFIG.read_text().splitlines()
+                                    if any(option in line for option in options)) + '\n')
+        for _ in range(2):
+            result = subprocess.run(['tmux', '-S', self.socket, 'source-file', str(config)],
+                                    env=self.env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stderr, '')
+            for option in supported:
+                self.assertEqual(self.tmux('show-options', '-gwv', option),
+                                 'fg=default,bg=default', option)
+
     @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
     def test_navigation_uses_j_and_k_without_typing_a_query(self):
         self.agent('claude', window='first')

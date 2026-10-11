@@ -51,6 +51,9 @@ and **Status**. It opens in navigation mode:
   returns to navigation; another Escape closes the popup.
 
 `prefix w` and `prefix W` keep their native tree behavior.
+Popups and tree preview borders use the terminal's default foreground and
+background. The shared config overrides tmux 3.8's gray defaults; older tmux
+versions quietly skip the new tree border option.
 
 The initial order is **Needs input**, **Done**, **Working**, then **Idle**. In search mode,
 fzf ranks matching rows. The list is a snapshot; **Ctrl-r** refreshes
