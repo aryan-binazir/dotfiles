@@ -78,8 +78,8 @@ def listing(socket, client=None):
     widths = [max(len(columns[i]) for columns in [header] + [row[2] for row in rows]) for i in range(4)]
     def render(columns):
         return '  '.join(value.ljust(width) for value, width in zip(columns, widths)).rstrip()
-    lines = ['\t\t   ' + render(header)]
-    lines.extend(f"{pane['pane_id']}\t{pane['session_id']}\t{i if i < 10 else ' '}  {render(columns)}"
+    lines = ['\t\t \t' + render(header)]
+    lines.extend(f"{pane['pane_id']}\t{pane['session_id']}\t{i if i < 10 else ' '}\t{render(columns)}"
                  for i, (_, pane, columns) in enumerate(rows))
     return '\n'.join(lines) + '\n'
 
@@ -116,9 +116,10 @@ def pick(socket, client):
               + shlex.quote(leave_search) + '; else printf abort; fi')
     number_bindings = []
     for i in range(10):
-        action = f'case {{3}} in "{i}  "*) printf accept;; esac'
-        number_bindings.extend(['--bind', f'{i}:pos({i + 1})+transform:{action}'])
-    result = subprocess.run(['fzf', '--delimiter=\t', '--with-nth=3..', '--header-lines=1',
+        select_row = rf'pos({i + 1})+transform:case \{{3}} in {i}) printf accept;; esac'
+        action = f'if [ "$FZF_MATCH_COUNT" -gt {i} ]; then printf %s {shlex.quote(select_row)}; fi'
+        number_bindings.extend(['--bind', f'{i}:transform:{action}'])
+    result = subprocess.run(['fzf', '--delimiter=\t', '--with-nth=3..', '--nth=2..', '--tabstop=3', '--header-lines=1',
                              '--with-shell=sh -c', '--layout=reverse', '--info=inline', '--no-multi', '--tiebreak=index',
                              '--no-input', '--prompt=Search agents > ',
                              '--bind=j:down,k:up',

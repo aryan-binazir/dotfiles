@@ -42,10 +42,12 @@ and **Status**. It opens in navigation mode:
 
 - `j` moves down; `k` moves up. Arrow keys work too.
 - `0`–`9` immediately open the correspondingly labeled row. The first ten rows
-  have shortcuts; use movement keys or search for the rest.
+  have shortcuts; use movement keys or search for the rest. Unavailable numbers
+  leave the highlighted row unchanged.
 - Enter opens the highlighted pane. Escape closes the popup without navigating.
 - `/` enters search mode. Type to filter any column; letters and numbers are
-  ordinary query text here. Enter opens the match. Escape clears the search and
+  ordinary query text here. Search matches the four data columns, excluding the
+  shortcut labels. Enter opens the match. Escape clears the search and
   returns to navigation; another Escape closes the popup.
 
 `prefix w` and `prefix W` keep their native tree behavior.

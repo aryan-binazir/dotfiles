@@ -144,9 +144,9 @@ class PickerTest(unittest.TestCase):
     @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
     def test_number_shortcuts_select_the_labeled_rows_without_enter(self):
         panes = [self.agent('codex', window=f'agent-{i}') for i in range(11)]
-        rows = [row.split('\t')[-1] for row in self.listing().splitlines()[1:]]
+        rows = [row.split('\t')[2] for row in self.listing().splitlines()[1:]]
         for i, row in enumerate(rows):
-            self.assertTrue(row.startswith(f'{i}  ' if i < 10 else '   '), row)
+            self.assertEqual(row, str(i) if i < 10 else ' ')
         self.load_binding()
         fd, client = self.attach()
         for i in (9, 0, 5):
@@ -171,6 +171,30 @@ class PickerTest(unittest.TestCase):
         self.keys_and_wait(fd, b'\x1b', '0-9:')
         os.write(fd, b'0')
         self.until(lambda: self.client_state(client).split()[1] == first)
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_unavailable_number_preserves_the_highlighted_row(self):
+        panes = [self.agent('codex', window=name) for name in ('first', 'second', 'third')]
+        self.load_binding()
+        fd, client = self.attach()
+        for movement, target in ((b'', panes[0]), (b'j', panes[1])):
+            with self.subTest(movement=movement):
+                self.open_popup(fd)
+                os.write(fd, movement + b'9\r')
+                self.until(lambda: self.client_state(client).split()[1] == target)
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_search_excludes_shortcut_labels_but_matches_window_numbers(self):
+        self.agent('claude', window='first')
+        target = self.agent('codex', window='second')
+        self.agent('pi', window='third')
+        self.load_binding()
+        fd, client = self.attach()
+        self.open_popup(fd)
+        self.keys_and_wait(fd, b'/^2', '0/3')
+        self.keys_and_wait(fd, b'\x152:', 'Codex')
+        os.write(fd, b'\r')
+        self.until(lambda: self.client_state(client).split()[1] == target)
 
     def test_lists_agents_in_column_and_attention_order(self):
         idle = self.agent('2.1.289', window='idle')
@@ -282,7 +306,7 @@ class PickerTest(unittest.TestCase):
         output = self.listing()
         self.assertEqual(len(output.splitlines()), 2)
         row = output.splitlines()[1].split('\t')
-        self.assertEqual(len(row), 3)
+        self.assertEqual(len(row), 4)
         self.assertEqual(row[0], pane)
         self.assertIn('$(touch never)', row[-1])
         self.assertNotIn('\x1b', output)
