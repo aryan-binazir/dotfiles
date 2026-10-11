@@ -64,6 +64,8 @@ Status uses the same symbols as the tmux tabs: **!** needs input, **✓** marks
 unread stopped output, the spinner marks working, and idle is blank. Rows keep
 that priority order. In search mode, fzf ranks matching rows. While open, the
 picker reads the existing pane states and current spinner frame once a second.
+It prepares updates in the background and reloads only changed snapshots, so
+metadata queries do not block typing or movement. Overlapping polls are skipped.
 It preserves your query and highlighted pane across status changes and
 reordering. **Ctrl-r** also refreshes immediately. Closing the popup stops its
 refresh timer; the shared attention monitor continues unchanged. Status can be filtered by its symbol. Seen but unanswered

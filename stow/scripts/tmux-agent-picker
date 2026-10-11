@@ -2,6 +2,7 @@
 """Find an open AI pane in this tmux server."""
 
 import argparse
+import fcntl
 import os
 from pathlib import Path
 import re
@@ -9,6 +10,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 
 
 FIELDS = ('pane_id', 'session_id', 'window_id', 'window_index', 'pane_index',
@@ -88,6 +90,21 @@ def message(socket, client, text):
     tmux(socket, 'display-message', '-c', client, '-d', '3000', text)
 
 
+def poll(socket, client):
+    state = Path(os.environ['PICKER_STATE'])
+    with state.with_suffix('.lock').open('w') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        snapshot = listing(socket, client)
+        if snapshot != state.read_text():
+            pending = state.with_suffix('.pending')
+            pending.write_text(snapshot)
+            pending.replace(state)
+            print('reload-sync:cat "$PICKER_STATE"')
+
+
 def open_picker(socket, client):
     if not shutil.which('fzf'):
         message(socket, client, 'Agent picker requires fzf on PATH')
@@ -122,16 +139,20 @@ def pick(socket, client):
         select_row = rf'pos({i + 1})+transform:case \{{3}} in {i}) printf accept;; esac'
         action = f'if [ "$FZF_MATCH_COUNT" -gt {i} ]; then printf %s {shlex.quote(select_row)}; fi'
         number_bindings.extend(['--bind', f'{i}:transform:{action}'])
-    result = subprocess.run(['fzf', '--delimiter=\t', '--with-nth=3..', '--nth=2..', '--tabstop=3', '--header-lines=1',
-                             '--with-shell=sh -c', '--layout=reverse', '--info=inline', '--no-multi', '--tiebreak=index',
-                             '--no-input', '--prompt=Search agents > ', '--track', '--id-nth=1',
-                             '--bind=j:down,k:up',
-                             f'--bind=/:show-input+clear-query+unbind({shortcuts})+change-footer({search_help})',
-                             f'--bind=esc:transform:{escape}',
-                             '--bind=every(1):reload-sync:"$PICKER_PY" "$PICKER_SELF" list',
-                             '--bind=ctrl-r:reload-sync:"$PICKER_PY" "$PICKER_SELF" list',
-                             f'--footer={navigation_help}', '--footer-border=none', *number_bindings],
-                            input=snapshot, stdout=subprocess.PIPE, text=True, env=env)
+    with tempfile.TemporaryDirectory(prefix='tmux-agent-picker-') as directory:
+        state = Path(directory) / 'snapshot'
+        state.write_text(snapshot)
+        env['PICKER_STATE'] = str(state)
+        result = subprocess.run(['fzf', '--delimiter=\t', '--with-nth=3..', '--nth=2..', '--tabstop=3', '--header-lines=1',
+                                 '--with-shell=sh -c', '--layout=reverse', '--info=inline', '--no-multi', '--tiebreak=index',
+                                 '--no-input', '--prompt=Search agents > ', '--track', '--id-nth=1',
+                                 '--bind=j:down,k:up',
+                                 f'--bind=/:show-input+clear-query+unbind({shortcuts})+change-footer({search_help})',
+                                 f'--bind=esc:transform:{escape}',
+                                 '--bind=every(1):bg-transform:"$PICKER_PY" "$PICKER_SELF" poll',
+                                 '--bind=ctrl-r:bg-transform:"$PICKER_PY" "$PICKER_SELF" poll',
+                                 f'--footer={navigation_help}', '--footer-border=none', *number_bindings],
+                                input=snapshot, stdout=subprocess.PIPE, text=True, env=env)
     if result.returncode in (1, 130):
         return
     result.check_returncode()
@@ -153,7 +174,7 @@ def pick(socket, client):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['list', 'open', 'pick'])
+    parser.add_argument('command', choices=['list', 'open', 'pick', 'poll'])
     parser.add_argument('--socket', default=os.environ.get('PICKER_SOCKET'))
     parser.add_argument('--client', default=os.environ.get('PICKER_CLIENT'))
     args = parser.parse_args()
@@ -166,6 +187,8 @@ def main():
             print(listing(args.socket, args.client), end='')
         elif args.command == 'open':
             open_picker(args.socket, args.client)
+        elif args.command == 'poll':
+            poll(args.socket, args.client)
         else:
             pick(args.socket, args.client)
     except (OSError, ValueError, subprocess.SubprocessError):

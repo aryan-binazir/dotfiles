@@ -360,6 +360,39 @@ class PickerTest(unittest.TestCase):
         os.write(fd, b'\r')
         self.until(lambda: self.client_state(client).split()[1] == pane)
 
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_slow_refresh_keeps_navigation_and_accept_responsive(self):
+        self.agent('claude', window='first')
+        target = self.agent('codex', window='second')
+        self.agent('pi', window='third')
+        commands = self.directory / 'commands'
+        commands.mkdir()
+        pending = self.directory / 'pending'
+        started = self.directory / 'started'
+        wrapper = commands / 'tmux'
+        wrapper.write_text('#!/bin/sh\n'
+                           'if [ "$3" = list-panes ] && [ -f "$PICKER_PENDING" ] && [ ! -f "$PICKER_STARTED" ]; then\n'
+                           '  printf . >> "$PICKER_STARTED"\n'
+                           '  while [ -f "$PICKER_PENDING" ]; do sleep .01; done\n'
+                           'fi\nexec ' + shlex.quote(shutil.which('tmux')) + ' "$@"\n')
+        wrapper.chmod(0o755)
+        self.tmux('set-environment', '-g', 'PATH', str(commands) + ':' + self.env['PATH'])
+        self.tmux('set-environment', '-g', 'PICKER_PENDING', str(pending))
+        self.tmux('set-environment', '-g', 'PICKER_STARTED', str(started))
+        self.load_binding()
+        fd, client = self.attach()
+        for keys in (b'j\r', b'/second\r'):
+            with self.subTest(keys=keys):
+                pending.unlink(missing_ok=True)
+                started.unlink(missing_ok=True)
+                self.open_popup(fd)
+                pending.touch()
+                os.write(fd, b'\x12')
+                self.until(started.exists)
+                os.write(fd, keys)
+                self.until(lambda: self.client_state(client).split()[1] == target, timeout=2)
+                self.assertTrue(pending.exists())
+
     def test_labels_cannot_inject_terminal_controls_or_break_rows(self):
         name = 'quoted " $(touch never) \u202e'
         pane = self.agent('codex', window=name)
@@ -458,7 +491,6 @@ class PickerTest(unittest.TestCase):
         self.keys_and_wait(fd, '/✓'.encode(), '0/1')
         self.tmux('set-option', '-p', '-t', pane, '@ai_attention_state', 'done')
         self.keys_and_wait(fd, b'\x12', 'Codex')
-        time.sleep(.15)
         os.write(fd, b'\r')
         self.until(lambda: self.client_state(client).split()[1] == pane)
 
