@@ -149,8 +149,6 @@ class PickerTest(unittest.TestCase):
     def test_ambiguous_commands_require_a_recognized_attention_state(self):
         known = self.agent('cursor-agent')
         ambiguous = self.agent('node')
-        wrapped_pi = self.agent('uv')
-        self.tmux('select-pane', '-t', wrapped_pi, '-T', 'π - project')
         states = [('blocked', 'Needs input'), ('blocked-quiet1', 'Needs input'),
                   ('blocked-quiet2', 'Needs input'), ('blocked-seen', 'Needs input'),
                   ('blocked-seen-quiet1', 'Needs input'), ('blocked-seen-quiet2', 'Needs input'),
@@ -161,12 +159,25 @@ class PickerTest(unittest.TestCase):
                 self.tmux('set-option', '-p', '-t', ambiguous, '@ai_attention_state', state)
                 rows = {row.split('\t')[0]: row for row in self.listing().splitlines()[1:]}
                 self.assertIn('Cursor', rows[known])
-                self.assertIn('Pi', rows[wrapped_pi])
                 if label:
                     self.assertIn('node', rows[ambiguous])
                     self.assertTrue(rows[ambiguous].endswith(label))
                 else:
                     self.assertNotIn(ambiguous, rows)
+
+    def test_pi_titles_do_not_bypass_ambiguous_runtime_eligibility_or_labels(self):
+        for command in ('node', 'bun', 'uv'):
+            pane = self.agent(command)
+            self.tmux('select-pane', '-t', pane, '-T', 'π - project')
+            for state, label in [('', None), ('unexpected', None), ('done', 'Done')]:
+                with self.subTest(command=command, state=state):
+                    self.tmux('set-option', '-p', '-t', pane, '@ai_attention_state', state)
+                    rows = {row.split('\t')[0]: row for row in self.listing().splitlines()[1:]}
+                    if label:
+                        self.assertRegex(rows[pane], command + r'\s+' + label)
+                    else:
+                        self.assertNotIn(pane, rows)
+            self.tmux('kill-pane', '-t', pane)
 
     def test_stale_pi_title_does_not_turn_an_ordinary_shell_into_an_agent(self):
         pane = self.agent('sh')
@@ -277,6 +288,24 @@ class PickerTest(unittest.TestCase):
         os.write(fd, b'\r')
         self.until(lambda: self.client_state(client).split()[1] == pane)
         self.assertEqual(self.tmux('display', '-p', '-t', pane, '#{window_zoomed_flag}'), '1')
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_linked_windows_share_active_pane_without_switching_observer_session(self):
+        pane = self.agent('codex')
+        window = self.tmux('display', '-p', '-t', pane, '#{window_id}')
+        other = self.tmux('split-window', '-t', pane, '-P', '-F', '#{pane_id}', 'sleep 300')
+        self.tmux('new-session', '-d', '-s', 'linked', 'sleep 300')
+        self.tmux('link-window', '-s', window, '-t', 'linked:')
+        self.tmux('select-window', '-t', 'linked:' + window)
+        self.load_binding()
+        fd, client = self.attach()
+        _, observer = self.attach('linked')
+        session, active = self.client_state(observer).split()
+        self.assertEqual(active, other)
+        self.open_popup(fd)
+        os.write(fd, b'\r')
+        self.until(lambda: self.client_state(client).split()[1] == pane)
+        self.assertEqual(self.client_state(observer).split(), [session, pane])
 
     @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
     def test_linked_target_uses_the_session_shown_in_the_picker(self):

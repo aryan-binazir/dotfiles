@@ -51,16 +51,22 @@ Claude executables named with a version number are recognized too. Ambiguous
 `node`, `bun`, and `uv` processes appear only with an existing attention state,
 using their process name rather than guessing an agent. These inherit the
 monitor's heuristic limitations: a state is not proof of an AI process.
+Pane titles alone do not establish agent identity. Long names can extend beyond
+the popup width; wide Unicode characters can misalign the columns.
 
 Linked panes appear once, preferring their name in your current session. Enter
 rechecks pane identity, follows moved panes, preserves zoom, and reports a closed
 pane instead of selecting something else. Navigation targets the invoking
-client. Clients attached to separate sessions stay put; clients sharing the
-selected session inherently share its active window and pane.
+client. Clients sharing the selected session share its active window and pane.
+Linked windows also share their active pane across sessions, so selecting another
+split changes that pane for other clients viewing the same linked window; their
+session attachments stay unchanged.
 
 ### Installation
 
-The popup needs Python 3, fzf, and a tmux version with `display-popup` support.
+The popup needs [Python 3.8+](https://docs.python.org/3/whatsnew/3.8.html),
+[fzf 0.51+](https://github.com/junegunn/fzf/releases/tag/0.51.0), and
+[tmux 3.3+](https://github.com/tmux/tmux/blob/3.3/CHANGES).
 The helper must be linked on **each machine** before loading the new binding.
 From the permanent dotfiles checkout, create the link if the destination is free:
 

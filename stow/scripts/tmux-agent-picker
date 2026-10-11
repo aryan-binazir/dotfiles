@@ -12,7 +12,7 @@ import sys
 
 
 FIELDS = ('pane_id', 'session_id', 'window_id', 'window_index', 'pane_index',
-          'session_name', 'window_name', 'pane_current_command', 'pane_title',
+          'session_name', 'window_name', 'pane_current_command',
           '@ai_attention_state')
 
 
@@ -62,7 +62,7 @@ def listing(socket, client=None):
             agent = 'Claude'
         elif command.startswith('codex'):
             agent = 'Codex'
-        elif command == 'pi' or (command in ('node', 'bun', 'uv') and pane['pane_title'].startswith('π - ')):
+        elif command == 'pi':
             agent = 'Pi'
         elif command == 'cursor-agent':
             agent = 'Cursor'
