@@ -1,4 +1,3 @@
-"""Drive the agent picker through its CLI and a private tmux server."""
 import fcntl
 import os
 from pathlib import Path
