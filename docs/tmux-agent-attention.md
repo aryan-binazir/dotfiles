@@ -43,7 +43,8 @@ bottom, leaving the column headers above the list.
 
 ![Agent picker](images/tmux-agent-picker-symbols.png)
 
-It opens in navigation mode:
+It opens in navigation mode with your current agent pane highlighted. If your
+current pane is not listed, it starts on the first row.
 
 - `j` moves down; `k` moves up. Arrow keys work too.
 - `0`–`9` immediately open the correspondingly labeled row. The first ten rows

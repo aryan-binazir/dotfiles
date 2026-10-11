@@ -174,6 +174,51 @@ class PickerTest(unittest.TestCase):
         self.until(lambda: self.client_state(client).split()[1] == target)
 
     @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_initial_selection_uses_the_invoking_clients_exact_agent_pane(self):
+        self.agent('claude', window='urgent', state='blocked')
+        current = self.agent('codex', window='shared')
+        target = self.agent('codex', window='shared')
+        self.tmux('join-pane', '-h', '-s', target, '-t', current)
+        self.tmux('new-session', '-d', '-s', 'observer', 'sleep 300')
+        self.load_binding()
+        fd, client = self.attach()
+        self.tmux('switch-client', '-c', client, '-t', current)
+        _, observer = self.attach('observer')
+        before = self.client_state(observer)
+        self.open_popup(fd)
+        os.write(fd, b'j\r')
+        self.until(lambda: self.client_state(client).split()[1] == target)
+        self.assertEqual(self.client_state(observer), before)
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_initial_selection_can_start_beyond_visible_rows_and_number_shortcuts(self):
+        panes = [self.agent('codex', window=f'agent-{i:02}') for i in range(25)]
+        self.load_binding()
+        fd, client = self.attach()
+        self.tmux('switch-client', '-c', client, '-t', panes[23])
+        self.open_popup(fd)
+        os.write(fd, b'j\r')
+        self.until(lambda: self.client_state(client).split()[1] == panes[24])
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_initial_selection_is_not_reapplied_after_automatic_refresh(self):
+        self.agent('claude', window='first', state='working')
+        current = self.agent('codex', window='second', state='working')
+        target = self.agent('pi', window='third', state='working')
+        self.load_binding()
+        fd, client = self.attach()
+        self.tmux('switch-client', '-c', client, '-t', current)
+        self.open_popup(fd)
+        self.output[fd] = b''
+        os.write(fd, b'j')
+        self.until(lambda: bool(self.output[fd]))
+        self.output[fd] = b''
+        self.tmux('set-option', '-p', '-t', target, '@ai_attention_state', 'blocked')
+        self.until(lambda: b'!' in self.output[fd])
+        os.write(fd, b'\r')
+        self.until(lambda: self.client_state(client).split()[1] == target)
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
     def test_number_shortcuts_select_the_labeled_rows_without_enter(self):
         panes = [self.agent('codex', window=f'agent-{i}') for i in range(11)]
         rows = [row.split('\t')[2] for row in self.listing().splitlines()[1:]]
@@ -372,6 +417,7 @@ class PickerTest(unittest.TestCase):
             with self.subTest(keys=keys):
                 pending.unlink(missing_ok=True)
                 started.unlink(missing_ok=True)
+                self.tmux('switch-client', '-c', client, '-t', 'home:0')
                 self.open_popup(fd)
                 pending.touch()
                 self.until(started.exists)
