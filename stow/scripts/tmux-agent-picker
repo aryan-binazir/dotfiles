@@ -132,8 +132,8 @@ def pick(socket, client):
            'PICKER_PY': sys.executable, 'PICKER_SELF': str(Path(__file__).resolve()),
            'PICKER_SOCKET': socket, 'PICKER_CLIENT': client}
     shortcuts = 'j,k,/,0,1,2,3,4,5,6,7,8,9'
-    navigation_help = 'j/k move  0-9/Enter: open  / search  Ctrl-r refresh  Esc close'
-    search_help = 'Type to filter  Enter: open  Ctrl-r refresh  Esc back'
+    navigation_help = 'j/k move  0-9/Enter: open  / search  Esc close'
+    search_help = 'Type to filter  Enter: open  Esc back'
     leave_search = (f'search()+hide-input+rebind({shortcuts})'
                     f'+change-footer({navigation_help})')
     escape = ('if [ "$FZF_INPUT_STATE" = enabled ]; then printf %s '
@@ -151,7 +151,6 @@ def pick(socket, client):
                              f'--bind=/:show-input+clear-query+unbind({shortcuts})+change-footer({search_help})',
                              f'--bind=esc:transform:{escape}',
                              '--bind=every(1):bg-transform:"$PICKER_PY" "$PICKER_SELF" poll',
-                             '--bind=ctrl-r:bg-transform:"$PICKER_PY" "$PICKER_SELF" poll',
                              f'--footer={navigation_help}', '--footer-border=none', *number_bindings],
                             input=snapshot, stdout=subprocess.PIPE, text=True, env=env)
     if result.returncode in (1, 130):

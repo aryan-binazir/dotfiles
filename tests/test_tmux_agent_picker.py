@@ -348,19 +348,6 @@ class PickerTest(unittest.TestCase):
         self.until(lambda: self.client_state(client).split()[1] == target)
 
     @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
-    def test_manual_refresh_updates_status_and_preserves_the_query(self):
-        self.agent('claude', session='aaa', window='other', state='done')
-        pane = self.agent('codex', session='ember', window='proposal', state='working')
-        self.load_binding()
-        fd, client = self.attach()
-        self.open_popup(fd)
-        self.keys_and_wait(fd, '/proposal ✓'.encode(), '0/2')
-        self.tmux('set-option', '-p', '-t', pane, '@ai_attention_state', 'done')
-        self.keys_and_wait(fd, b'\x12', '1/2')
-        os.write(fd, b'\r')
-        self.until(lambda: self.client_state(client).split()[1] == pane)
-
-    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
     def test_slow_refresh_keeps_navigation_and_accept_responsive(self):
         self.agent('claude', window='first')
         target = self.agent('codex', window='second')
@@ -387,7 +374,6 @@ class PickerTest(unittest.TestCase):
                 started.unlink(missing_ok=True)
                 self.open_popup(fd)
                 pending.touch()
-                os.write(fd, b'\x12')
                 self.until(started.exists)
                 os.write(fd, keys)
                 self.until(lambda: self.client_state(client).split()[1] == target, timeout=2)
@@ -516,8 +502,9 @@ class PickerTest(unittest.TestCase):
         fd, client = self.attach()
         self.open_popup(fd)
         self.keys_and_wait(fd, '/✓'.encode(), '0/1')
+        self.output[fd] = b''
         self.tmux('set-option', '-p', '-t', pane, '@ai_attention_state', 'done')
-        self.keys_and_wait(fd, b'\x12', 'Codex')
+        self.until(lambda: b'Codex' in self.output[fd])
         os.write(fd, b'\r')
         self.until(lambda: self.client_state(client).split()[1] == pane)
 

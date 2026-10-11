@@ -67,8 +67,8 @@ picker reads the existing pane states and current spinner frame once a second.
 It prepares updates in the background and reloads only changed snapshots, so
 metadata queries do not block typing or movement. Overlapping polls are skipped.
 It preserves your query and highlighted pane across status changes and
-reordering. **Ctrl-r** also refreshes immediately. Closing the popup stops its
-refresh timer; the shared attention monitor continues unchanged. Status can be filtered by its symbol. Seen but unanswered
+reordering. Closing the popup stops its refresh timer; the shared attention
+monitor continues unchanged. Status can be filtered by its symbol. Seen but unanswered
 dialogs still show **!**. **✓** does not mean task success. Opening or cancelling the
 popup does not clear attention; visiting a window uses the usual acknowledgement
 rules below.
