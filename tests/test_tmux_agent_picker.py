@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import pty
 import re
+import runpy
 import select
 import shlex
 import shutil
@@ -345,6 +346,92 @@ class PickerTest(unittest.TestCase):
         self.tmux('select-pane', '-t', pane, '-T', 'π - old project')
         self.assertEqual(len(self.listing().splitlines()), 1)
 
+    def test_pi_conversation_names_require_an_exact_cwd_suffix(self):
+        pane = self.agent('pi', window='manual-window')
+        folder = self.directory / 'folder - with - separators'
+        folder.mkdir()
+        self.tmux('respawn-pane', '-k', '-t', pane, '-c', str(folder),
+                  shlex.join([str(self.directory / 'pi'), '-c', 'while :; do sleep 1; done']))
+        self.until(lambda: self.tmux('display-message', '-p', '-t', pane,
+                                    '#{pane_current_path}') == str(folder))
+        cases = [('', 'manual-window'), ('hostname', 'manual-window'),
+                 ('π - ' + folder.name, 'manual-window'),
+                 ('π - Name - different-folder', 'manual-window'),
+                 ('π -    - ' + folder.name, 'manual-window'),
+                 ('π - \u200b - ' + folder.name, 'manual-window'),
+                 ('π - Plan - with - separators - ' + folder.name, 'Plan - with - separators'),
+                 ('π - quoted "$(touch never)" \u202e - ' + folder.name, 'quoted "$(touch never)"')]
+        for title, expected in cases:
+            with self.subTest(title=title):
+                self.tmux('select-pane', '-t', pane, '-T', title)
+                rows = self.listing().splitlines()
+                self.assertEqual(len(rows), 2)
+                self.assertIn(':' + expected, rows[1])
+                self.assertNotIn('π - ', rows[1])
+                self.assertNotIn('\u202e', rows[1])
+                self.assertFalse((folder / 'never').exists())
+
+    def test_conversation_titles_do_not_replace_other_provider_window_names(self):
+        for command in ('claude', '2.1.296', 'codex', 'cursor-agent', 'node', 'bun', 'uv'):
+            pane = self.agent(command, window='manual-' + command, state='working')
+            folder = Path(self.tmux('display-message', '-p', '-t', pane, '#{pane_current_path}')).name
+            self.tmux('select-pane', '-t', pane, '-T', 'π - Misleading name - ' + folder)
+        output = self.listing()
+        self.assertNotIn('Misleading name', output)
+        for command in ('claude', '2.1.296', 'codex', 'cursor-agent', 'node', 'bun', 'uv'):
+            self.assertIn(':manual-' + command, output)
+
+    def test_conversation_title_input_is_bounded_before_python_receives_it(self):
+        pane = self.agent('pi', window='manual-window')
+        folder = Path(self.tmux('display-message', '-p', '-t', pane, '#{pane_current_path}')).name
+        self.tmux('select-pane', '-t', pane, '-T', 'π - ' + 'x' * 300 + ' - ' + folder)
+        rows = runpy.run_path(str(SCRIPT))['panes'](self.socket)
+        self.assertEqual(len(next(row['pane_title'] for row in rows if row['pane_id'] == pane)), 256)
+        self.assertIn(':manual-window', self.listing())
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_conversation_rename_preserves_search_and_selection_and_stops_on_close(self):
+        first = self.agent('pi', window='manual-first', state='working')
+        target = self.agent('pi', window='manual-second', state='working')
+        folder = Path(self.tmux('display-message', '-p', '-t', target, '#{pane_current_path}')).name
+        self.tmux('select-pane', '-t', first, '-T', 'π - Needle first - ' + folder)
+        titlefile = self.directory / 'title'
+        titlefile.write_text('π - Needle second - ' + folder)
+        body = ("while :; do printf '\\033]0;%s\\007' \"$(cat " + shlex.quote(str(titlefile))
+                + ')"; IFS= read -r line || exit; done')
+        self.tmux('respawn-pane', '-k', '-t', target,
+                  shlex.join([str(self.directory / 'pi'), '-c', body]))
+        self.until(lambda: 'Needle second' in self.listing())
+        commands = self.directory / 'commands'
+        commands.mkdir()
+        queries = self.directory / 'queries'
+        wrapper = commands / 'tmux'
+        wrapper.write_text('#!/bin/sh\n'
+                           'if [ "$3" = list-panes ]; then printf . >> ' + shlex.quote(str(queries))
+                           + '; fi\nexec ' + shlex.quote(shutil.which('tmux')) + ' "$@"\n')
+        wrapper.chmod(0o755)
+        self.tmux('set-environment', '-g', 'PATH', str(commands) + ':' + self.env['PATH'])
+        self.tmux('select-window', '-t', first)
+        self.load_binding()
+        fd, client = self.attach()
+        self.open_popup(fd)
+        self.keys_and_wait(fd, b'/Needle', '2/2')
+        self.output[fd] = b''
+        os.write(fd, b'\x1b[B')
+        self.until(lambda: bool(self.output[fd]))
+        self.output[fd] = b''
+        titlefile.write_text('π - Needle renamed - ' + folder)
+        self.tmux('send-keys', '-t', target, 'Enter')
+        self.tmux('set-option', '-p', '-t', target, '@ai_attention_state', 'done')
+        self.until(lambda: b' renamed ' in self.output[fd])
+        self.assertIn(b'2/2', self.output[fd])
+        os.write(fd, b'\r')
+        self.until(lambda: self.client_state(client).split()[1] == target)
+        time.sleep(1.2)
+        count = queries.read_text()
+        time.sleep(1.3)
+        self.assertEqual(queries.read_text(), count)
+
     def test_malformed_attention_text_does_not_hide_other_agents(self):
         pane = self.agent('claude')
         subprocess.run(['tmux', '-S', self.socket, 'set-option', '-p', '-t', pane,
@@ -430,7 +517,13 @@ class PickerTest(unittest.TestCase):
                 self.open_popup(fd)
                 pending.touch()
                 self.until(started.exists)
-                os.write(fd, keys)
+                if keys.startswith(b'/'):
+                    os.write(fd, keys[:-1])
+                    self.until(lambda: '1/3' in re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '',
+                                                      self.output[fd].decode(errors='replace')), timeout=1)
+                    os.write(fd, keys[-1:])
+                else:
+                    os.write(fd, keys)
                 self.until(lambda: self.client_state(client).split()[1] == target, timeout=2)
                 self.assertTrue(pending.exists())
 
@@ -438,7 +531,10 @@ class PickerTest(unittest.TestCase):
     def test_all_agent_statuses_are_loaded_before_the_popup_opens(self):
         for command, state in (('claude', 'blocked'), ('pi', 'done'),
                                ('codex', 'working'), ('cursor-agent', '')):
-            self.agent(command, state=state)
+            pane = self.agent(command, state=state)
+            if command == 'pi':
+                folder = Path(self.tmux('display-message', '-p', '-t', pane, '#{pane_current_path}')).name
+                self.tmux('select-pane', '-t', pane, '-T', 'π - Preloaded name - ' + folder)
         commands = self.directory / 'commands'
         commands.mkdir()
         temporary = self.directory / 'popup-temporary'
@@ -465,6 +561,7 @@ class PickerTest(unittest.TestCase):
             snapshots = list(temporary.glob('tmux-agent-picker-*/snapshot'))
             self.assertEqual(len(snapshots), 1)
             self.assertEqual(snapshots[0].read_text(), self.listing(client))
+            self.assertIn('Preloaded name', snapshots[0].read_text())
             self.assertNotIn(b'SESSION', self.output[fd])
             release.touch()
             self.until(lambda: b'SESSION' in self.output[fd] and b'Enter:' in self.output[fd])

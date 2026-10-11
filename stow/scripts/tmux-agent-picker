@@ -15,7 +15,9 @@ import tempfile
 
 FIELDS = ('pane_id', 'session_id', 'window_id', 'window_index', 'pane_index',
           'session_name', 'window_name', 'pane_current_command',
-          '@ai_attention_state', 'TMUX_AI_SPINNER_FRAME', '@ai_agent_command')
+          '@ai_attention_state', 'TMUX_AI_SPINNER_FRAME', '@ai_agent_command',
+          'pane_title', 'pane_current_path')
+TITLE_LIMIT = 256
 
 
 def tmux(socket, *args):
@@ -24,7 +26,9 @@ def tmux(socket, *args):
 
 
 def panes(socket):
-    fmt = '\t'.join('#{s|[\x01-\x1f\x7f]| |:' + field + '}' for field in FIELDS)
+    fmt = '\t'.join('#{s|[\x01-\x1f\x7f]| |:' +
+                    (f'#{{={TITLE_LIMIT}:pane_title}}' if field == 'pane_title' else field) + '}'
+                    for field in FIELDS)
     rows = tmux(socket, 'list-panes', '-a', '-F', fmt)
     return [dict(zip(FIELDS, (''.join(c if c.isprintable() else ' ' for c in field) for field in fields)))
             for row in rows.split('\n') if len(fields := row.split('\t')) == len(FIELDS)]
@@ -72,8 +76,17 @@ def listing(socket, client=None):
             agent = command
         else:
             continue
+        window_name = pane['window_name']
+        if agent == 'Pi':
+            title = pane['pane_title']
+            folder = os.path.basename(pane['pane_current_path'].rstrip('/'))
+            prefix = 'π - '
+            suffix = ' - ' + folder
+            if (folder and len(title) < TITLE_LIMIT and title.startswith(prefix)
+                    and title != prefix + folder and title.endswith(suffix)):
+                window_name = title[len(prefix):-len(suffix)].strip() or window_name
         columns = (pane['session_name'],
-                   f"{pane['window_index']}:{pane['window_name']}", agent, label)
+                   f"{pane['window_index']}:{window_name}", agent, label)
         rows.append((priority, pane, columns))
     rows.sort(key=lambda row: (row[0], row[1]['session_name'], int(row[1]['window_index']), int(row[1]['pane_index'])))
     header = ('SESSION', 'WINDOW', 'AGENT', 'STATUS')

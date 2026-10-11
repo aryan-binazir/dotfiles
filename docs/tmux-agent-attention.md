@@ -43,6 +43,16 @@ bottom, leaving the column headers above the list.
 It reads the initial agent list and statuses before opening the popup, using the
 same pane metadata as subsequent refreshes.
 
+For recognized Pi processes, Window shows `number:conversation name` from Pi's
+terminal title when its cwd suffix matches the pane's current directory. Unnamed,
+invalid, or oversized titles fall back to the tmux window name. Claude, Codex,
+Cursor, and ambiguous runtime processes use the window name. Titles never make
+an otherwise unrecognized pane eligible. Names are resolved in the initial
+snapshot and update through the existing refresh while open. The picker adds no
+provider calls, transcript reads, cache, or separate timer. Name metadata shares
+the existing five-second tmux query timeout; without a pane snapshot, the picker
+reports its usual error. Search matches the displayed name.
+
 ![Agent picker](images/tmux-agent-picker-symbols.png)
 
 It opens in navigation mode with your current agent pane highlighted. If your
