@@ -1,7 +1,9 @@
 """Drive the agent picker through its CLI and a private tmux server."""
+import fcntl
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import shlex
 import shutil
@@ -45,9 +47,15 @@ class PickerTest(unittest.TestCase):
 
     def close_clients(self):
         for process, fd in self.clients:
-            process.terminate()
-            process.wait(timeout=5)
-            os.close(fd)
+            try:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+            finally:
+                os.close(fd)
 
     def agent(self, command, session='home', window='agent', state=''):
         executable = self.directory / command
@@ -71,7 +79,7 @@ class PickerTest(unittest.TestCase):
         self.fail('Timed out waiting for picker behavior')
 
     def pump(self):
-        for process, fd in self.clients:
+        for _, fd in self.clients:
             while select.select([fd], [], [], 0)[0]:
                 try:
                     self.output[fd] += os.read(fd, 65536)
@@ -81,7 +89,6 @@ class PickerTest(unittest.TestCase):
     def attach(self, session='home'):
         before = self.tmux('list-clients', '-F', '#{client_name}').splitlines()
         fd, slave = pty.openpty()
-        import fcntl
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 35, 120, 0, 0))
         process = subprocess.Popen(['tmux', '-S', self.socket, 'attach', '-t', session],
                                    env=self.env, stdin=slave, stdout=slave, stderr=slave)
@@ -111,6 +118,12 @@ class PickerTest(unittest.TestCase):
         self.output[fd] = b''
         os.write(fd, b'\x02b')
         self.until(lambda: b'SESSION' in self.output[fd] and b'Search agents' in self.output[fd])
+
+    def keys_and_wait(self, fd, keys, text):
+        self.output[fd] = b''
+        os.write(fd, keys)
+        self.until(lambda: text in re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '',
+                                          self.output[fd].decode(errors='replace')))
 
     def listing(self, client=None):
         args = [sys.executable, str(SCRIPT), 'list', '--socket', self.socket]
@@ -155,6 +168,22 @@ class PickerTest(unittest.TestCase):
                 else:
                     self.assertNotIn(ambiguous, rows)
 
+    def test_stale_pi_title_does_not_turn_an_ordinary_shell_into_an_agent(self):
+        pane = self.agent('sh')
+        self.tmux('select-pane', '-t', pane, '-T', 'π - old project')
+        self.assertEqual(len(self.listing().splitlines()), 1)
+
+    def test_malformed_attention_text_does_not_hide_other_agents(self):
+        pane = self.agent('claude')
+        subprocess.run(['tmux', '-S', self.socket, 'set-option', '-p', '-t', pane,
+                        '@ai_attention_state', b'bad\xffstate'], env=self.env, check=True,
+                       capture_output=True, timeout=5)
+        self.agent('codex', state='done')
+        output = self.listing()
+        self.assertEqual(len(output.splitlines()), 3)
+        self.assertRegex(output, r'Claude\s+Idle')
+        self.assertRegex(output, r'Codex\s+Done')
+
     def test_linked_panes_appear_once_in_the_invoking_clients_session(self):
         pane = self.agent('codex', window='same')
         window = self.tmux('display', '-p', '-t', pane, '#{window_id}')
@@ -168,17 +197,16 @@ class PickerTest(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
     def test_popup_filters_and_enters_the_exact_pane_in_the_invoking_client(self):
-        pane = self.agent('codex', session='ember', window='proposal', state='blocked')
-        self.agent('claude', window='other', state='working')
+        pane = self.agent('codex', session='ember', window='proposal', state='working')
+        self.agent('claude', window='other', state='blocked')
         self.tmux('new-session', '-d', '-s', 'observer', 'sleep 300')
         self.load_binding()
         fd, client = self.attach()
         _, observer = self.attach('observer')
         before = self.client_state(observer)
         self.open_popup(fd)
-        os.write(fd, b'ember proposal Codex input')
-        self.until(lambda: b'input' in self.output[fd])
-        time.sleep(.1)
+        self.keys_and_wait(fd, pane.encode(), '0/2')
+        self.keys_and_wait(fd, b'\x15ember proposal Codex Working', '1/2')
         os.write(fd, b'\r')
         self.until(lambda: self.client_state(client).split()[1] == pane)
         self.assertEqual(self.client_state(observer), before)
@@ -190,11 +218,9 @@ class PickerTest(unittest.TestCase):
         self.load_binding()
         fd, client = self.attach()
         self.open_popup(fd)
-        os.write(fd, b'proposal Done')
-        time.sleep(.15)
+        self.keys_and_wait(fd, b'proposal Done', '0/2')
         self.tmux('set-option', '-p', '-t', pane, '@ai_attention_state', 'done')
-        os.write(fd, b'\x12')
-        time.sleep(.3)
+        self.keys_and_wait(fd, b'\x12', '1/2')
         os.write(fd, b'\r')
         self.until(lambda: self.client_state(client).split()[1] == pane)
 
@@ -217,12 +243,15 @@ class PickerTest(unittest.TestCase):
         fd, client = self.attach()
         before = self.client_state(client)
         self.open_popup(fd)
+        self.output[fd] = b''
         os.write(fd, b'\x1b')
-        time.sleep(.2)
+        self.until(lambda: b'\x1b[?25h' in self.output[fd])
         self.assertEqual(self.client_state(client), before)
         self.assertEqual(self.tmux('show-option', '-pqv', '-t', pane, '@ai_attention_state'), 'done')
         self.open_popup(fd)
+        self.output[fd] = b''
         os.write(fd, b'\x1b')
+        self.until(lambda: b'\x1b[?25h' in self.output[fd])
 
     @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
     def test_closed_target_reports_message_without_switching(self):
@@ -272,11 +301,9 @@ class PickerTest(unittest.TestCase):
         self.load_binding(source)
         fd, client = self.attach()
         self.open_popup(fd)
-        os.write(fd, b'Done')
-        time.sleep(.1)
+        self.keys_and_wait(fd, b'Done', '0/1')
         self.tmux('set-option', '-p', '-t', pane, '@ai_attention_state', 'done')
-        os.write(fd, b'\x12')
-        time.sleep(.3)
+        self.keys_and_wait(fd, b'\x12', '1/1')
         os.write(fd, b'\r')
         self.until(lambda: self.client_state(client).split()[1] == pane)
 

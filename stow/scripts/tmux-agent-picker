@@ -4,11 +4,11 @@
 import argparse
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
-import sys
-import re
 import subprocess
+import sys
 
 
 FIELDS = ('pane_id', 'session_id', 'window_id', 'window_index', 'pane_index',
@@ -18,7 +18,7 @@ FIELDS = ('pane_id', 'session_id', 'window_id', 'window_index', 'pane_index',
 
 def tmux(socket, *args):
     return subprocess.run(['tmux', '-S', socket, *args], check=True,
-                          text=True, capture_output=True, timeout=5).stdout.rstrip('\n')
+                          text=True, errors='replace', capture_output=True, timeout=5).stdout.rstrip('\n')
 
 
 def panes(socket):
@@ -62,7 +62,7 @@ def listing(socket, client=None):
             agent = 'Claude'
         elif command.startswith('codex'):
             agent = 'Codex'
-        elif command == 'pi' or pane['pane_title'].startswith('π - '):
+        elif command == 'pi' or (command in ('node', 'bun', 'uv') and pane['pane_title'].startswith('π - ')):
             agent = 'Pi'
         elif command == 'cursor-agent':
             agent = 'Cursor'
@@ -107,7 +107,7 @@ def pick(socket, client):
            'PICKER_PY': sys.executable, 'PICKER_SELF': str(Path(__file__).resolve()),
            'PICKER_SOCKET': socket, 'PICKER_CLIENT': client}
     result = subprocess.run(['fzf', '--delimiter=\t', '--with-nth=3..', '--header-lines=1',
-                             '--layout=reverse', '--info=inline', '--no-multi', '--tiebreak=index',
+                             '--with-shell=sh -c', '--layout=reverse', '--info=inline', '--no-multi', '--tiebreak=index',
                              '--prompt=Search agents > ',
                              '--bind=ctrl-r:reload:"$PICKER_PY" "$PICKER_SELF" list',
                              '--header=Enter: open pane   Ctrl-r: refresh   Esc: close'],
