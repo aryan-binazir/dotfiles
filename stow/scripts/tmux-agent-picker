@@ -73,13 +73,14 @@ def listing(socket, client=None):
         else:
             continue
         columns = (pane['session_name'],
-                   f"{pane['window_index']}:{pane['window_name']} / {pane['pane_index']}", agent, label)
+                   f"{pane['window_index']}:{pane['window_name']}", agent, label)
         rows.append((priority, pane, columns))
     rows.sort(key=lambda row: (row[0], row[1]['session_name'], int(row[1]['window_index']), int(row[1]['pane_index'])))
     header = ('SESSION', 'WINDOW', 'AGENT', 'STATUS')
     widths = [max(len(columns[i]) for columns in [header] + [row[2] for row in rows]) for i in range(4)]
     def render(columns):
-        return '    '.join(value.ljust(width) for value, width in zip(columns, widths)).rstrip()
+        return '    '.join(value.center(width) if i == 3 else value.ljust(width)
+                           for i, (value, width) in enumerate(zip(columns, widths))).rstrip()
     lines = ['\t\t#\t' + render(header)]
     lines.extend(f"{pane['pane_id']}\t{pane['session_id']}\t{i if i < 10 else ' '}\t{render(columns)}"
                  for i, (_, pane, columns) in enumerate(rows))
