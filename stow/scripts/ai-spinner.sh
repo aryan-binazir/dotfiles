@@ -172,10 +172,10 @@ apply_scan() {
         return
     fi
     # One tmux process snapshots panes, windows, sessions, and clients per scan.
-    snapshot=$(tmux list-panes -a -F 'P|#{pane_id}=#{@ai_attention_state}|' \; \
-        list-windows -a -F 'W#{window_id}' \; \
-        list-sessions -F 'S#{session_id}' \; \
-        list-clients -F 'C#{client_name}|#{window_id}|#{client_flags}|#{pane_in_mode}') || return
+    snapshot=$(tmux list-panes -a -F 'P|#{pane_id}=#{@ai_attention_state}|' ';' \
+        list-windows -a -F 'W#{window_id}' ';' \
+        list-sessions -F 'S#{session_id}' ';' \
+        list-clients -F 'C#{client_name}|#{window_id}|#{client_flags}|#{pane_in_mode}' 2>/dev/null) || return
     pane_states="" windows="" sessions="" client_rows=""
     while IFS= read -r line; do
         case $line in
@@ -367,7 +367,6 @@ while :; do
     case $step in
     1) sleep 0.25 ;;
     2) sleep 0.5 ;;
-    3) sleep 0.75 ;;
-    *) sleep 1 ;;
+    *) sleep 0.75 ;;
     esac
 done

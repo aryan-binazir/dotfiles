@@ -22,6 +22,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "stow/scripts/ai-spinner.sh"
 CONFIG = ROOT / "stow/arch-linux/tmux/.config/tmux/tmux.conf"
+THEME = Path.home() / ".config/tmux/plugins/tmux-themepack/powerline/default/gray.tmuxtheme"
 
 
 def copy_shell(executable):
@@ -147,21 +148,37 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
             return []
         return [json.loads(line) for line in self.notifications.read_text().splitlines()]
 
-    def recorded_tools(self, *names):
+    def recorded_tools(self, *names, delays=None):
+        """Log each invocation of the named commands; arrival times are stamped by a watcher thread."""
         tools = self.directory / "recorded-tools"
         tools.mkdir()
         self.invocations = self.directory / "invocations"
+        self.invocations.touch()
         for name in names:
             real = shutil.which(name)
             self.assertIsNotNone(real)
+            delay = f"sleep {delays[name]}\n" if delays and name in delays else ""
             wrapper = tools / name
             wrapper.write_text(f"#!/bin/sh\nprintf '%s\\n' \"{name} $*\" >> {shlex.quote(str(self.invocations))}\n"
-                               f"exec {shlex.quote(real)} \"$@\"\n")
+                               f"{delay}exec {shlex.quote(real)} \"$@\"\n")
             wrapper.chmod(0o755)
+        self.stamped = []
+        stop = threading.Event()
+        self.addCleanup(stop.set)
+        def watch():
+            with open(self.invocations, errors="replace") as log:
+                pending = ""
+                while not stop.is_set():
+                    pending += log.read()
+                    now = time.monotonic()
+                    *lines, pending = pending.split("\n")
+                    self.stamped.extend((now, line) for line in lines)
+                    time.sleep(0.005)
+        threading.Thread(target=watch, daemon=True).start()
         return {"PATH": f"{tools}:{self.env['PATH']}"}
 
     def invocation_lines(self):
-        return self.invocations.read_text().splitlines() if self.invocations.exists() else []
+        return self.invocations.read_text(errors="replace").splitlines() if self.invocations.exists() else []
 
     def test_background_completion_shows_an_informational_desktop_notification(self):
         self.tmux("set-option", "-g", "base-index", "1")
@@ -690,28 +707,32 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.attach()
         daemon = self.start_daemon(env)
         self.until(lambda: "@ai_spinner_s" in self.tmux("show-options", "-t", self.session), "initial display")
-        before = len(self.invocation_lines())
+        before = len(self.stamped)
         time.sleep(3)
-        window = self.invocation_lines()[before:]
-        sleeps = sum(line.startswith("sleep ") for line in window)
-        scans = sum(line.startswith("tmux ") and "pane_title" in line for line in window)
-        self.assertLessEqual(sleeps, 7, "idle monitoring must not wake at animation rate")
-        self.assertGreaterEqual(scans, 2, "detection keeps its one-second cadence")
+        window = self.stamped[before:]
+        sleeps = sum(line.startswith("sleep ") for _, line in window)
+        scans = [at for at, line in window if line.startswith("tmux ") and "pane_title" in line]
+        applies = [at for at, line in window if line.startswith("tmux ") and "list-clients" in line]
+        self.assertLessEqual(sleeps, 9, "idle monitoring must not wake at animation rate")
+        self.assertGreaterEqual(len(scans), 2, "detection keeps its one-second cadence")
+        for started in scans[:-1]:
+            applied = next(at for at in applies if at > started)
+            self.assertLess(applied - started, 0.6, "an idle scan is applied about a frame after it starts")
         self.assertIsNone(daemon.poll())
         self.working()
         self.until(lambda: bool(self.icon()), "idle monitor still detects new work")
-        frame = self.icon()
-        self.until(lambda: self.icon() != frame, "animation resumes at full rate")
+        time.sleep(0.5)
+        before = len(self.stamped)
+        time.sleep(2)
+        frames = sum(line == "sleep 0.25" for _, line in self.stamped[before:])
+        self.assertGreaterEqual(frames, 6, "visible work animates about four times a second")
 
     def test_slow_idle_scans_keep_their_one_second_cadence(self):
         executable = self.directory / "claude"
         copy_shell(executable)
         self.tmux("new-window", "-d", "-t", "test",
                   shlex.join([str(executable), "-c", "printf 'Ready\\n'; while IFS= read -r line; do :; done"]))
-        env = self.recorded_tools("tmux")
-        tools = Path(env["PATH"].split(":")[0])
-        (tools / "awk").write_text(f"#!/bin/sh\nsleep 0.6\nexec {shlex.quote(shutil.which('awk'))} \"$@\"\n")
-        (tools / "awk").chmod(0o755)
+        env = self.recorded_tools("tmux", "awk", delays={"awk": 0.6})
         self.attach()
         daemon = self.start_daemon(env)
         self.until(lambda: "@ai_spinner_s" in self.tmux("show-options", "-t", self.session), "initial display")
@@ -962,7 +983,7 @@ sys.exit(result.returncode)
         self.tmux("source-file", str(config))
         self.assertEqual(self.tmux("show-options", "-gqv", "@ai_attention_command").strip(), "")
 
-    def test_status_bar_refreshes_slowly_without_spawning_shell_jobs(self):
+    def source_theme_overrides(self):
         lines = CONFIG.read_text().splitlines()
         theme_lines = [line for line in lines if line.startswith("set -g @theme")]
         self.assertTrue(theme_lines)
@@ -971,17 +992,23 @@ sys.exit(result.returncode)
         config = self.directory / "theme.conf"
         config.write_text("\n".join(theme_lines) + "\n")
         self.tmux("source-file", str(config))
-        theme = Path.home() / ".config/tmux/plugins/tmux-themepack/powerline/default/gray.tmuxtheme"
-        if theme.exists():
-            self.tmux("source-file", str(theme))
-            options = ("status-left", "status-right", "status-interval")
-        else:
-            options = ("@theme-status-left", "@theme-status-right", "@theme-status-interval")
-        left, right, interval = (self.tmux("show-options", "-gv", option).strip() for option in options)
-        self.assertEqual(interval, "15")
-        self.assertNotIn("#(", left + right, "status jobs fork a shell on every refresh")
+
+    def assert_slow_status_without_shell_jobs(self, left, right, interval):
+        values = [self.tmux("show-options", "-gv", option).strip() for option in (left, right, interval)]
+        self.assertEqual(values[2], "15")
+        self.assertNotIn("#(", values[0] + values[1], "status jobs fork a shell on every refresh")
         user = subprocess.run(["id", "-un"], text=True, capture_output=True, check=True).stdout.strip()
-        self.assertIn(f" {user} ", self.tmux("display-message", "-p", left))
+        self.assertIn(f" {user} ", self.tmux("display-message", "-p", values[0]))
+
+    def test_status_bar_overrides_refresh_slowly_without_shell_jobs(self):
+        self.source_theme_overrides()
+        self.assert_slow_status_without_shell_jobs("@theme-status-left", "@theme-status-right", "@theme-status-interval")
+
+    @unittest.skipUnless(THEME.exists(), "installed tmux-themepack is required")
+    def test_installed_themepack_applies_the_slow_status_bar(self):
+        self.source_theme_overrides()
+        self.tmux("source-file", str(THEME))
+        self.assert_slow_status_without_shell_jobs("status-left", "status-right", "status-interval")
 
     def test_default_config_plays_the_completion_sound(self):
         player = self.directory / "canberra-gtk-play"
@@ -1094,20 +1121,12 @@ sys.exit(result.returncode)
         copy_shell(executable)
         self.tmux("new-window", "-d", "-t", "test",
                   shlex.join([str(executable), "-c", "printf 'Ready\\n'; while IFS= read -r line; do :; done"]))
-        wrappers = self.directory / "filters"
-        wrappers.mkdir()
-        calls = self.directory / "filter-calls"
-        for name in ("grep", "tail", "awk"):
-            real = shutil.which(name)
-            self.assertIsNotNone(real)
-            wrapper = wrappers / name
-            wrapper.write_text(f"#!/bin/sh\nprintf '%s\\n' {name} >> {shlex.quote(str(calls))}\nexec {shlex.quote(real)} \"$@\"\n")
-            wrapper.chmod(0o755)
+        env = self.recorded_tools("grep", "tail", "awk")
         self.attach()
         before = self.tmux("show-messages").count("command: capture-pane")
-        self.start_daemon({"PATH": str(wrappers) + os.pathsep + self.env["PATH"]})
+        self.start_daemon(env)
         self.until(lambda: "@ai_spinner_s" in self.tmux("show-options", "-t", self.session), "first scan applied")
-        filters = len(calls.read_text().splitlines())
+        filters = sum(line.startswith(("grep ", "tail ", "awk ")) for line in self.invocation_lines())
         captures = self.tmux("show-messages").count("command: capture-pane") - before
         self.assertGreaterEqual(captures, 1)
         self.assertLessEqual(filters, captures, "idle panes must not spawn multiple grep/tail stages per capture")

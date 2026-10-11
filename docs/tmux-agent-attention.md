@@ -27,10 +27,11 @@ normal full redraw. A session retains its markers while any of its windows has
 unread attention; visiting a different window in that session doesn't clear it.
 
 Detection runs roughly once a second and animation roughly four times a second.
-When nothing animates, the monitor sleeps from one applied scan to the next
-instead of waking per frame. Each scan reads pane state, windows, sessions, and
-client metadata in one tmux call, and captured text is filtered in one pass. Without terminal clients, detection and notifications continue but
-animation stops. The internal frame is not exported to new pane processes.
+When nothing animates, the monitor wakes only to start and apply each scan
+rather than once per frame. Applying a scan reads pane state, windows, sessions,
+and client metadata in one tmux call, and captured text is filtered in one pass.
+Without terminal clients, detection and notifications continue but animation
+stops. The internal frame is not exported to new pane processes.
 
 ## Acknowledgement and persistence
 
