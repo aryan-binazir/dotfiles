@@ -115,11 +115,14 @@ def open_picker(socket, client):
     if not match or tuple(map(int, match.groups())) < (0, 73):
         message(socket, client, 'Agent picker requires fzf 0.73+; upgrade fzf')
         return
-    command = shlex.join([sys.executable, str(Path(__file__).resolve()), 'pick',
-                          '--socket', socket, '--client', client])
-    subprocess.run(['tmux', '-S', socket, 'display-popup', '-c', client,
-                    '-E', '-w', '85%', '-h', '65%', '-x', 'C', '-y', 'C',
-                    '-T', ' Agents ', command], check=True, capture_output=True)
+    with tempfile.TemporaryDirectory(prefix='tmux-agent-picker-') as directory:
+        state = Path(directory) / 'snapshot'
+        command = shlex.join(['env', 'PICKER_STATE=' + str(state), sys.executable,
+                              str(Path(__file__).resolve()), 'pick',
+                              '--socket', socket, '--client', client])
+        subprocess.run(['tmux', '-S', socket, 'display-popup', '-c', client,
+                        '-E', '-w', '85%', '-h', '65%', '-x', 'C', '-y', 'C',
+                        '-T', ' Agents ', command], check=True, capture_output=True)
 
 
 def pick(socket, client):
@@ -139,20 +142,17 @@ def pick(socket, client):
         select_row = rf'pos({i + 1})+transform:case \{{3}} in {i}) printf accept;; esac'
         action = f'if [ "$FZF_MATCH_COUNT" -gt {i} ]; then printf %s {shlex.quote(select_row)}; fi'
         number_bindings.extend(['--bind', f'{i}:transform:{action}'])
-    with tempfile.TemporaryDirectory(prefix='tmux-agent-picker-') as directory:
-        state = Path(directory) / 'snapshot'
-        state.write_text(snapshot)
-        env['PICKER_STATE'] = str(state)
-        result = subprocess.run(['fzf', '--delimiter=\t', '--with-nth=3..', '--nth=2..', '--tabstop=3', '--header-lines=1',
-                                 '--with-shell=sh -c', '--layout=reverse', '--info=inline', '--no-multi', '--tiebreak=index',
-                                 '--no-input', '--prompt=Search agents > ', '--track', '--id-nth=1',
-                                 '--bind=j:down,k:up',
-                                 f'--bind=/:show-input+clear-query+unbind({shortcuts})+change-footer({search_help})',
-                                 f'--bind=esc:transform:{escape}',
-                                 '--bind=every(1):bg-transform:"$PICKER_PY" "$PICKER_SELF" poll',
-                                 '--bind=ctrl-r:bg-transform:"$PICKER_PY" "$PICKER_SELF" poll',
-                                 f'--footer={navigation_help}', '--footer-border=none', *number_bindings],
-                                input=snapshot, stdout=subprocess.PIPE, text=True, env=env)
+    Path(env['PICKER_STATE']).write_text(snapshot)
+    result = subprocess.run(['fzf', '--delimiter=\t', '--with-nth=3..', '--nth=2..', '--tabstop=3', '--header-lines=1',
+                             '--with-shell=sh -c', '--layout=reverse', '--info=inline', '--no-multi', '--tiebreak=index',
+                             '--no-input', '--prompt=Search agents > ', '--track', '--id-nth=1',
+                             '--bind=j:down,k:up',
+                             f'--bind=/:show-input+clear-query+unbind({shortcuts})+change-footer({search_help})',
+                             f'--bind=esc:transform:{escape}',
+                             '--bind=every(1):bg-transform:"$PICKER_PY" "$PICKER_SELF" poll',
+                             '--bind=ctrl-r:bg-transform:"$PICKER_PY" "$PICKER_SELF" poll',
+                             f'--footer={navigation_help}', '--footer-border=none', *number_bindings],
+                            input=snapshot, stdout=subprocess.PIPE, text=True, env=env)
     if result.returncode in (1, 130):
         return
     result.check_returncode()

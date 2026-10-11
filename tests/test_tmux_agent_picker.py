@@ -393,6 +393,33 @@ class PickerTest(unittest.TestCase):
                 self.until(lambda: self.client_state(client).split()[1] == target, timeout=2)
                 self.assertTrue(pending.exists())
 
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_snapshot_files_are_removed_after_forced_popup_close_and_detach(self):
+        self.agent('codex')
+        temporary = self.directory / 'popup-temporary'
+        temporary.mkdir()
+        self.tmux('set-environment', '-g', 'TMPDIR', str(temporary))
+        fd, client = self.attach()
+        for close in ('popup', 'detach'):
+            with self.subTest(close=close):
+                self.output[fd] = b''
+                process = subprocess.Popen([sys.executable, str(SCRIPT), 'open', '--socket', self.socket,
+                                            '--client', client], env={**self.env, 'TMPDIR': str(temporary)},
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                try:
+                    self.until(lambda: b'SESSION' in self.output[fd] and b'Enter:' in self.output[fd])
+                    self.assertTrue(list(temporary.iterdir()))
+                    if close == 'popup':
+                        self.tmux('display-popup', '-C', '-c', client)
+                    else:
+                        self.tmux('detach-client', '-t', client)
+                    process.communicate(timeout=5)
+                    self.assertEqual(list(temporary.iterdir()), [])
+                finally:
+                    if process.poll() is None:
+                        process.terminate()
+                        process.communicate(timeout=5)
+
     def test_labels_cannot_inject_terminal_controls_or_break_rows(self):
         name = 'quoted " $(touch never) \u202e'
         pane = self.agent('codex', window=name)
