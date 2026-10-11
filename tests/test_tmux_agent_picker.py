@@ -413,14 +413,38 @@ class PickerTest(unittest.TestCase):
         self.assertIn('Agent picker requires fzf on PATH', self.tmux('show-messages', '-t', client))
 
     @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
-    def test_empty_picker_explains_that_no_agents_were_detected(self):
-        _, client = self.attach()
+    def test_empty_picker_stays_open_and_can_refresh_new_agents(self):
+        self.load_binding()
+        fd, client = self.attach()
         before = self.client_state(client)
-        result = subprocess.run([sys.executable, str(SCRIPT), 'open', '--socket', self.socket, '--client', client],
-                                env=self.env, capture_output=True, text=True, timeout=5)
-        self.assertEqual(result.returncode, 0)
-        self.assertIn('No AI panes detected', self.tmux('show-messages', '-t', client))
+        self.open_popup(fd)
+        self.keys_and_wait(fd, b'/', '0/0')
         self.assertEqual(self.client_state(client), before)
+        pane = self.agent('codex', window='new-agent')
+        self.keys_and_wait(fd, b'\x12', 'new-agent')
+        os.write(fd, b'\r')
+        self.until(lambda: self.client_state(client).split()[1] == pane)
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_empty_picker_can_be_closed_without_navigating(self):
+        fd, client = self.attach()
+        before = self.client_state(client)
+        self.output[fd] = b''
+        process = subprocess.Popen([sys.executable, str(SCRIPT), 'open', '--socket', self.socket,
+                                    '--client', client], env=self.env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            self.until(lambda: b'SESSION' in self.output[fd] and b'Enter:' in self.output[fd])
+            self.assertIsNone(process.poll())
+            os.write(fd, b'\x1b')
+            output, errors = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 0)
+            self.assertEqual(output + errors, '')
+            self.assertEqual(self.client_state(client), before)
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            process.communicate(timeout=5)
 
 
 if __name__ == '__main__':

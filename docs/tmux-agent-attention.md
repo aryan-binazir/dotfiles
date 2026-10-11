@@ -92,7 +92,8 @@ If the link already exists, inspect its target instead of overwriting it. The
 binding calls Python explicitly; the helper does not need a separate PATH entry.
 Do not use a temporary worktree as the installed source. Reload with `prefix q`
 after installing the helper and applying the config. A missing fzf executable
-produces a tmux message. No agents produces an empty-state message.
+produces a tmux message. With no agents, the popup stays open with an empty list;
+use Ctrl-r to load newly started agents or Escape to close it.
 
 ## Acknowledgement and persistence
 

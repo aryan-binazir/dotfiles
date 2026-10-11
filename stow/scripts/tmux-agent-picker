@@ -101,9 +101,6 @@ def open_picker(socket, client):
 
 def pick(socket, client):
     snapshot = listing(socket, client)
-    if len(snapshot.splitlines()) <= 1:
-        message(socket, client, 'No AI panes detected')
-        return
     env = {**os.environ, 'FZF_DEFAULT_OPTS': '', 'FZF_DEFAULT_OPTS_FILE': '',
            'PICKER_PY': sys.executable, 'PICKER_SELF': str(Path(__file__).resolve()),
            'PICKER_SOCKET': socket, 'PICKER_CLIENT': client}
