@@ -35,12 +35,20 @@ animation stops. The internal frame is not exported to new pane processes.
 
 `prefix b` opens a centered, searchable list of AI panes across the current tmux
 server. The columns are **Session**, **Window** (including pane index), **Agent**,
-and **Status**. Type to filter any column, use arrows to select, and press Enter
-to visit that pane. Escape closes the popup without navigating. `prefix w` and
-`prefix W` keep their native tree behavior.
+and **Status**. It opens in navigation mode:
 
-The initial order is **Needs input**, **Done**, **Working**, then **Idle**. Once
-you type, fzf ranks matching rows. The list is a snapshot; **Ctrl-r** refreshes
+- `j` moves down; `k` moves up. Arrow keys work too.
+- `0`–`9` immediately open the correspondingly labeled row. The first ten rows
+  have shortcuts; use movement keys or search for the rest.
+- Enter opens the highlighted pane. Escape closes the popup without navigating.
+- `/` enters search mode. Type to filter any column; letters and numbers are
+  ordinary query text here. Enter opens the match. Escape clears the search and
+  returns to navigation; another Escape closes the popup.
+
+`prefix w` and `prefix W` keep their native tree behavior.
+
+The initial order is **Needs input**, **Done**, **Working**, then **Idle**. In search mode,
+fzf ranks matching rows. The list is a snapshot; **Ctrl-r** refreshes
 it while keeping your query. Seen but unanswered dialogs still show Needs input.
 Done means unread stopped output, not task success. Opening or cancelling the
 popup does not clear attention; visiting a window uses the usual acknowledgement
@@ -65,7 +73,7 @@ session attachments stay unchanged.
 ### Installation
 
 The popup needs [Python 3.8+](https://docs.python.org/3/whatsnew/3.8.html),
-[fzf 0.51+](https://github.com/junegunn/fzf/releases/tag/0.51.0), and
+[fzf 0.59+](https://github.com/junegunn/fzf/releases/tag/0.59.0), and
 [tmux 3.3+](https://github.com/tmux/tmux/blob/3.3/CHANGES).
 The helper must be linked on **each machine** before loading the new binding.
 From the permanent dotfiles checkout, create the link if the destination is free:

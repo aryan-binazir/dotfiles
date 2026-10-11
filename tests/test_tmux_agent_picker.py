@@ -116,7 +116,7 @@ class PickerTest(unittest.TestCase):
     def open_popup(self, fd):
         self.output[fd] = b''
         os.write(fd, b'\x02b')
-        self.until(lambda: b'SESSION' in self.output[fd] and b'Search agents' in self.output[fd])
+        self.until(lambda: b'SESSION' in self.output[fd] and b'Enter:' in self.output[fd])
 
     def keys_and_wait(self, fd, keys, text):
         self.output[fd] = b''
@@ -129,6 +129,48 @@ class PickerTest(unittest.TestCase):
         if client:
             args += ['--client', client]
         return subprocess.run(args, env=self.env, text=True, capture_output=True, check=True, timeout=5).stdout
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_navigation_uses_j_and_k_without_typing_a_query(self):
+        self.agent('claude', window='first')
+        target = self.agent('codex', window='second')
+        self.agent('pi', window='third')
+        self.load_binding()
+        fd, client = self.attach()
+        self.open_popup(fd)
+        os.write(fd, b'xjjk\r')
+        self.until(lambda: self.client_state(client).split()[1] == target)
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_number_shortcuts_select_the_labeled_rows_without_enter(self):
+        panes = [self.agent('codex', window=f'agent-{i}') for i in range(11)]
+        rows = [row.split('\t')[-1] for row in self.listing().splitlines()[1:]]
+        for i, row in enumerate(rows):
+            self.assertTrue(row.startswith(f'{i}  ' if i < 10 else '   '), row)
+        self.load_binding()
+        fd, client = self.attach()
+        for i in (9, 0, 5):
+            with self.subTest(key=i):
+                self.open_popup(fd)
+                os.write(fd, str(i).encode())
+                self.until(lambda: self.client_state(client).split()[1] == panes[i])
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_search_accepts_shortcut_characters_and_escape_restores_navigation(self):
+        first = self.agent('claude', window='other', state='done')
+        self.agent('codex', window='jk/9')
+        self.load_binding()
+        fd, client = self.attach()
+        before = self.client_state(client)
+        self.open_popup(fd)
+        os.write(fd, b'9')
+        self.keys_and_wait(fd, b'/jk/9', '1/2')
+        self.assertEqual(self.client_state(client), before)
+        self.keys_and_wait(fd, b'\x1b', '0-9:')
+        self.keys_and_wait(fd, b'/', '2/2')
+        self.keys_and_wait(fd, b'\x1b', '0-9:')
+        os.write(fd, b'0')
+        self.until(lambda: self.client_state(client).split()[1] == first)
 
     def test_lists_agents_in_column_and_attention_order(self):
         idle = self.agent('2.1.289', window='idle')
@@ -215,7 +257,7 @@ class PickerTest(unittest.TestCase):
         _, observer = self.attach('observer')
         before = self.client_state(observer)
         self.open_popup(fd)
-        self.keys_and_wait(fd, pane.encode(), '0/2')
+        self.keys_and_wait(fd, b'/' + pane.encode(), '0/2')
         self.keys_and_wait(fd, b'\x15ember proposal Codex Working', '1/2')
         os.write(fd, b'\r')
         self.until(lambda: self.client_state(client).split()[1] == pane)
@@ -228,7 +270,7 @@ class PickerTest(unittest.TestCase):
         self.load_binding()
         fd, client = self.attach()
         self.open_popup(fd)
-        self.keys_and_wait(fd, b'proposal Done', '0/2')
+        self.keys_and_wait(fd, b'/proposal Done', '0/2')
         self.tmux('set-option', '-p', '-t', pane, '@ai_attention_state', 'done')
         self.keys_and_wait(fd, b'\x12', '1/2')
         os.write(fd, b'\r')
@@ -329,7 +371,7 @@ class PickerTest(unittest.TestCase):
         self.load_binding(source)
         fd, client = self.attach()
         self.open_popup(fd)
-        self.keys_and_wait(fd, b'Done', '0/1')
+        self.keys_and_wait(fd, b'/Done', '0/1')
         self.tmux('set-option', '-p', '-t', pane, '@ai_attention_state', 'done')
         self.keys_and_wait(fd, b'\x12', '1/1')
         os.write(fd, b'\r')

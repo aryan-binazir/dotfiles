@@ -78,8 +78,9 @@ def listing(socket, client=None):
     widths = [max(len(columns[i]) for columns in [header] + [row[2] for row in rows]) for i in range(4)]
     def render(columns):
         return '  '.join(value.ljust(width) for value, width in zip(columns, widths)).rstrip()
-    lines = ['\t\t' + render(header)]
-    lines.extend(f"{pane['pane_id']}\t{pane['session_id']}\t{render(columns)}" for _, pane, columns in rows)
+    lines = ['\t\t   ' + render(header)]
+    lines.extend(f"{pane['pane_id']}\t{pane['session_id']}\t{i if i < 10 else ' '}  {render(columns)}"
+                 for i, (_, pane, columns) in enumerate(rows))
     return '\n'.join(lines) + '\n'
 
 
@@ -106,11 +107,25 @@ def pick(socket, client):
     env = {**os.environ, 'FZF_DEFAULT_OPTS': '', 'FZF_DEFAULT_OPTS_FILE': '',
            'PICKER_PY': sys.executable, 'PICKER_SELF': str(Path(__file__).resolve()),
            'PICKER_SOCKET': socket, 'PICKER_CLIENT': client}
+    shortcuts = 'j,k,/,0,1,2,3,4,5,6,7,8,9'
+    navigation_header = 'j/k: move  0-9: open  /: search  Enter: open  Ctrl-r: refresh  Esc: close'
+    search_header = 'Type to filter  Enter: open  Ctrl-r: refresh  Esc: back'
+    leave_search = (f'search()+hide-input+rebind({shortcuts})'
+                    f'+change-header({navigation_header})')
+    escape = ('if [ "$FZF_INPUT_STATE" = enabled ]; then printf %s '
+              + shlex.quote(leave_search) + '; else printf abort; fi')
+    number_bindings = []
+    for i in range(10):
+        action = f'case {{3}} in "{i}  "*) printf accept;; esac'
+        number_bindings.extend(['--bind', f'{i}:pos({i + 1})+transform:{action}'])
     result = subprocess.run(['fzf', '--delimiter=\t', '--with-nth=3..', '--header-lines=1',
                              '--with-shell=sh -c', '--layout=reverse', '--info=inline', '--no-multi', '--tiebreak=index',
-                             '--prompt=Search agents > ',
+                             '--no-input', '--prompt=Search agents > ',
+                             '--bind=j:down,k:up',
+                             f'--bind=/:show-input+clear-query+unbind({shortcuts})+change-header({search_header})',
+                             f'--bind=esc:transform:{escape}',
                              '--bind=ctrl-r:reload:"$PICKER_PY" "$PICKER_SELF" list',
-                             '--header=Enter: open pane   Ctrl-r: refresh   Esc: close'],
+                             f'--header={navigation_header}', *number_bindings],
                             input=snapshot, stdout=subprocess.PIPE, text=True, env=env)
     if result.returncode in (1, 130):
         return
