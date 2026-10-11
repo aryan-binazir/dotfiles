@@ -171,13 +171,27 @@ apply_scan() {
         rm -f "$scan_result" "$scan_ready"
         return
     fi
-    # One snapshot avoids a fresh tmux process for every pane on every scan.
-    pane_states=$(tmux list-panes -a -F '|#{pane_id}=#{@ai_attention_state}|') || return
+    # One tmux process snapshots panes, windows, sessions, and clients per scan.
+    snapshot=$(tmux list-panes -a -F 'P|#{pane_id}=#{@ai_attention_state}|' \; \
+        list-windows -a -F 'W#{window_id}' \; \
+        list-sessions -F 'S#{session_id}' \; \
+        list-clients -F 'C#{client_name}|#{window_id}|#{client_flags}|#{pane_in_mode}') || return
+    pane_states="" windows="" sessions="" client_rows=""
+    while IFS= read -r line; do
+        case $line in
+        P*) pane_states="$pane_states${line#P}" ;;
+        W*)
+            # Linked windows appear once per containing session.
+            case " $windows " in *" ${line#W} "*) ;; *) windows="$windows ${line#W}" ;; esac ;;
+        S*) sessions="$sessions ${line#S}" ;;
+        C*) client_rows="$client_rows${line#C}
+" ;;
+        esac
+    done <<EOF
+$snapshot
+EOF
     working="" working_s="" done_w="" done_s="" blocked_w="" blocked_s=""
-    windows=$(tmux list-windows -a -F '#{window_id}' | sort -u)
-    sessions=$(tmux list-sessions -F '#{session_id}')
     clients="" viewed=""
-    client_rows=$(tmux list-clients -F '#{client_name}|#{window_id}|#{client_flags}|#{pane_in_mode}' 2>/dev/null)
     while IFS='|' read -r client window flags in_mode; do
         [ -n "$client" ] || continue
         case ",$flags," in *,control-mode,*) continue ;; esac
@@ -344,6 +358,16 @@ while :; do
     else
         rendered=$next_rendered
     fi
-    tick=$((tick + 1))
-    sleep 0.25
+    step=1
+    # Once a scan is applied with nothing to animate, sleep through to the next scan tick.
+    if [ -z "$scan_pid" ] && { [ -z "$working" ] || [ -z "$clients" ]; }; then
+        step=$((4 - tick % 4))
+    fi
+    tick=$((tick + step))
+    case $step in
+    1) sleep 0.25 ;;
+    2) sleep 0.5 ;;
+    3) sleep 0.75 ;;
+    *) sleep 1 ;;
+    esac
 done

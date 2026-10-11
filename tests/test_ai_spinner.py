@@ -147,6 +147,22 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
             return []
         return [json.loads(line) for line in self.notifications.read_text().splitlines()]
 
+    def recorded_tools(self, *names):
+        tools = self.directory / "recorded-tools"
+        tools.mkdir()
+        self.invocations = self.directory / "invocations"
+        for name in names:
+            real = shutil.which(name)
+            self.assertIsNotNone(real)
+            wrapper = tools / name
+            wrapper.write_text(f"#!/bin/sh\nprintf '%s\\n' \"{name} $*\" >> {shlex.quote(str(self.invocations))}\n"
+                               f"exec {shlex.quote(real)} \"$@\"\n")
+            wrapper.chmod(0o755)
+        return {"PATH": f"{tools}:{self.env['PATH']}"}
+
+    def invocation_lines(self):
+        return self.invocations.read_text().splitlines() if self.invocations.exists() else []
+
     def test_background_completion_shows_an_informational_desktop_notification(self):
         self.tmux("set-option", "-g", "base-index", "1")
         self.tmux("move-window", "-r", "-t", "test")
@@ -653,6 +669,58 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         commands = self.tmux("show-messages").count(" command:") - before
         self.assertLessEqual(commands, 18, "idle monitoring must batch snapshots and avoid animation-rate control polling")
 
+    def test_each_scan_reads_its_tmux_snapshot_in_one_process(self):
+        self.tmux("new-window", "-d", "-t", "test", "sleep 300")
+        self.tmux("new-session", "-d", "-s", "other", "sleep 300")
+        env = self.recorded_tools("tmux", "sort")
+        self.attach()
+        self.start_daemon(env)
+        self.until(lambda: "@ai_spinner_s" in self.tmux("show-options", "-t", self.session), "initial display")
+        time.sleep(2.5)
+        snapshots = [line for line in self.invocation_lines()
+                     if line.startswith("tmux ") and "list-clients" in line]
+        self.assertGreaterEqual(len(snapshots), 2, "scans keep running")
+        for line in snapshots:
+            for command in ("list-panes", "list-windows", "list-sessions"):
+                self.assertIn(command, line, "pane, window, session, and client snapshots share one tmux process")
+        self.assertFalse([line for line in self.invocation_lines() if line.startswith("sort ")])
+
+    def test_idle_monitor_wakes_less_often_without_slowing_scans(self):
+        env = self.recorded_tools("tmux", "sleep")
+        self.attach()
+        daemon = self.start_daemon(env)
+        self.until(lambda: "@ai_spinner_s" in self.tmux("show-options", "-t", self.session), "initial display")
+        before = len(self.invocation_lines())
+        time.sleep(3)
+        window = self.invocation_lines()[before:]
+        sleeps = sum(line.startswith("sleep ") for line in window)
+        scans = sum(line.startswith("tmux ") and "pane_title" in line for line in window)
+        self.assertLessEqual(sleeps, 7, "idle monitoring must not wake at animation rate")
+        self.assertGreaterEqual(scans, 2, "detection keeps its one-second cadence")
+        self.assertIsNone(daemon.poll())
+        self.working()
+        self.until(lambda: bool(self.icon()), "idle monitor still detects new work")
+        frame = self.icon()
+        self.until(lambda: self.icon() != frame, "animation resumes at full rate")
+
+    def test_slow_idle_scans_keep_their_one_second_cadence(self):
+        executable = self.directory / "claude"
+        copy_shell(executable)
+        self.tmux("new-window", "-d", "-t", "test",
+                  shlex.join([str(executable), "-c", "printf 'Ready\\n'; while IFS= read -r line; do :; done"]))
+        env = self.recorded_tools("tmux")
+        tools = Path(env["PATH"].split(":")[0])
+        (tools / "awk").write_text(f"#!/bin/sh\nsleep 0.6\nexec {shlex.quote(shutil.which('awk'))} \"$@\"\n")
+        (tools / "awk").chmod(0o755)
+        self.attach()
+        daemon = self.start_daemon(env)
+        self.until(lambda: "@ai_spinner_s" in self.tmux("show-options", "-t", self.session), "initial display")
+        before = len(self.invocation_lines())
+        time.sleep(4)
+        scans = sum(line.startswith("tmux ") and "pane_title" in line for line in self.invocation_lines()[before:])
+        self.assertGreaterEqual(scans, 3, "a scan applied late must not postpone the next scan")
+        self.assertIsNone(daemon.poll())
+
     def test_completion_stays_visible_and_sounds_once(self):
         self.working()
         self.start_daemon()
@@ -893,6 +961,27 @@ sys.exit(result.returncode)
         self.tmux("source-file", str(config))
         self.tmux("source-file", str(config))
         self.assertEqual(self.tmux("show-options", "-gqv", "@ai_attention_command").strip(), "")
+
+    def test_status_bar_refreshes_slowly_without_spawning_shell_jobs(self):
+        lines = CONFIG.read_text().splitlines()
+        theme_lines = [line for line in lines if line.startswith("set -g @theme")]
+        self.assertTrue(theme_lines)
+        tpm = next(index for index, line in enumerate(lines) if "plugins/tpm/tpm" in line and line.startswith("run "))
+        self.assertTrue(all(lines.index(line) < tpm for line in theme_lines), "theme overrides must precede plugin load")
+        config = self.directory / "theme.conf"
+        config.write_text("\n".join(theme_lines) + "\n")
+        self.tmux("source-file", str(config))
+        theme = Path.home() / ".config/tmux/plugins/tmux-themepack/powerline/default/gray.tmuxtheme"
+        if theme.exists():
+            self.tmux("source-file", str(theme))
+            options = ("status-left", "status-right", "status-interval")
+        else:
+            options = ("@theme-status-left", "@theme-status-right", "@theme-status-interval")
+        left, right, interval = (self.tmux("show-options", "-gv", option).strip() for option in options)
+        self.assertEqual(interval, "15")
+        self.assertNotIn("#(", left + right, "status jobs fork a shell on every refresh")
+        user = subprocess.run(["id", "-un"], text=True, capture_output=True, check=True).stdout.strip()
+        self.assertIn(f" {user} ", self.tmux("display-message", "-p", left))
 
     def test_default_config_plays_the_completion_sound(self):
         player = self.directory / "canberra-gtk-play"
