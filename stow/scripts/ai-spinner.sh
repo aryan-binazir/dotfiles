@@ -48,15 +48,18 @@ f0=⡇ f1=⠏ f2=⠛ f3=⠹ f4=⢸ f5=⣰ f6=⣤ f7=⣆
 b0=$(printf '\342\240') b1=$(printf '\342\241')
 b2=$(printf '\342\242') b3=$(printf '\342\243')
 working="" working_s="" done_w="" done_s="" blocked_w="" blocked_s="" windows="" sessions="" clients=""
+verdicts=""
 notify_script=""
 if command -v python3 >/dev/null 2>&1; then
     notify_script=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().with_name("tmux-agent-notify"))' "$0")
 fi
 
 scan_panes() {
-    pane_rows=$(tmux list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{pane_current_command}|#{pane_title}') || return 1
-    while IFS='|' read -r sess win pane cmd title; do
-        w=0 title_busy=0 agent=$cmd
+    pane_rows=$(tmux display-message -p 'T%s' ';' \
+        list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{pane_current_command}|#{window_activity}|#{pane_width}x#{pane_height}|#{pane_title}') || return 1
+    while IFS='|' read -r sess win pane cmd activity size title; do
+        case $sess in T*) now=${sess#T}; continue ;; esac
+        w=0 title_busy=0 agent=$cmd memo=""
         case $title in
         "$b0"* | "$b1"* | "$b2"* | "$b3"* | ◐* | ◑* | ◒* | ◓*) w=1 title_busy=1 ;;
         esac
@@ -67,6 +70,22 @@ scan_panes() {
                     printf '%s|%s|%s|blocked\n' "$sess" "$win" "$pane"
                     continue ;;
                 esac
+                # tmux records window activity in whole seconds, so a screen captured
+                # in its last active second may have changed after the capture.
+                screen="$activity|$size|$agent|$title"
+                case $verdicts in *"
+$pane "*)
+                    cached=${verdicts#*"
+$pane "}
+                    cached=${cached%%"
+"*}
+                    captured=${cached#* }
+                    if [ "${captured#* }" = "$screen" ] && [ "$activity" -lt "${captured%% *}" ] 2>/dev/null; then
+                        printf '%s|%s|%s|%s|%s\n' "$sess" "$win" "$pane" "${cached%% *}" "$captured"
+                        continue
+                    fi ;;
+                esac
+                memo="$now $screen"
                 content=$(tmux capture-pane -p -t "$pane" 2>/dev/null) || { printf '%s|%s|%s|unknown\n' "$sess" "$win" "$pane"; continue; }
                 # C locale makes '.' consume the third UTF-8 byte of a braille glyph.
                 w=$(printf '%s\n' "$content" | LC_ALL=C awk -v braille="$b0|$b1|$b2|$b3" -v command="$agent" -v title_busy="$title_busy" '
@@ -146,7 +165,7 @@ scan_panes() {
                     }
                 ') ;;
         esac
-        printf '%s|%s|%s|%s\n' "$sess" "$win" "$pane" "$w"
+        printf '%s|%s|%s|%s|%s\n' "$sess" "$win" "$pane" "$w" "$memo"
     done <<EOF
 $pane_rows
 EOF
@@ -171,13 +190,26 @@ apply_scan() {
         rm -f "$scan_result" "$scan_ready"
         return
     fi
-    # One snapshot avoids a fresh tmux process for every pane on every scan.
-    pane_states=$(tmux list-panes -a -F '|#{pane_id}=#{@ai_attention_state}|') || return
+    snapshot=$(tmux list-panes -a -F 'P|#{pane_id}=#{@ai_attention_state}|' ';' \
+        list-windows -a -F 'W#{window_id}' ';' \
+        list-sessions -F 'S#{session_id}' ';' \
+        list-clients -F 'C#{client_name}|#{window_id}|#{client_flags}|#{pane_in_mode}' 2>/dev/null) || return
+    pane_states="" windows="" sessions="" client_rows=""
+    while IFS= read -r line; do
+        case $line in
+        P*) pane_states="$pane_states${line#P}" ;;
+        W*)
+            # Linked windows appear once per containing session.
+            case " $windows " in *" ${line#W} "*) ;; *) windows="$windows ${line#W}" ;; esac ;;
+        S*) sessions="$sessions ${line#S}" ;;
+        C*) client_rows="$client_rows${line#C}
+" ;;
+        esac
+    done <<EOF
+$snapshot
+EOF
     working="" working_s="" done_w="" done_s="" blocked_w="" blocked_s=""
-    windows=$(tmux list-windows -a -F '#{window_id}' | sort -u)
-    sessions=$(tmux list-sessions -F '#{session_id}')
     clients="" viewed=""
-    client_rows=$(tmux list-clients -F '#{client_name}|#{window_id}|#{client_flags}|#{pane_in_mode}' 2>/dev/null)
     while IFS='|' read -r client window flags in_mode; do
         [ -n "$client" ] || continue
         case ",$flags," in *,control-mode,*) continue ;; esac
@@ -193,10 +225,13 @@ EOF
     notify=0
     notify_panes=""
     processed_states=""
-    while IFS='|' read -r sess win pane busy; do
+    next_verdicts=""
+    while IFS='|' read -r sess win pane busy memo; do
         # Pane closure is not completion. Never update a reused/default target.
         case $pane in %*[!0-9]* | % | '') continue ;; %*) ;; *) continue ;; esac
         case $win in @*[!0-9]* | @ | '') continue ;; @*) ;; *) continue ;; esac
+        [ -z "$memo" ] || next_verdicts="$next_verdicts
+$pane $busy $memo"
         # Linked windows reuse the state applied earlier in this scan; they
         # must neither advance debounce again nor aggregate the stale snapshot.
         case $processed_states in
@@ -269,6 +304,7 @@ EOF
             case " $blocked_s " in *" $sess "*) ;; *) blocked_s="$blocked_s $sess" ;; esac ;;
         esac
     done < "$scan_result"
+    verdicts=$next_verdicts
     if [ "$notify" = 1 ]; then
         sound_command=$(tmux show -gqv @ai_attention_command)
         if [ -n "$sound_command" ]; then
