@@ -34,6 +34,66 @@ tmux call, and captured text is filtered in one pass.
 Without terminal clients, detection and notifications continue but animation
 stops. The internal frame is not exported to new pane processes.
 
+## Agent popup
+
+`prefix b` opens a centered, searchable list of AI panes across the current tmux
+server. The columns are **Session**, **Window** (including pane index), **Agent**,
+and **Status**. It opens in navigation mode:
+
+- `j` moves down; `k` moves up. Arrow keys work too.
+- `0`–`9` immediately open the correspondingly labeled row. The first ten rows
+  have shortcuts; use movement keys or search for the rest. Unavailable numbers
+  leave the highlighted row unchanged.
+- Enter opens the highlighted pane. Escape closes the popup without navigating.
+- `/` enters search mode. Type to filter any column; letters and numbers are
+  ordinary query text here. Search matches the four data columns, excluding the
+  shortcut labels. Enter opens the match. Escape clears the search and
+  returns to navigation; another Escape closes the popup.
+
+`prefix w` and `prefix W` keep their native tree behavior.
+
+The initial order is **Needs input**, **Done**, **Working**, then **Idle**. In search mode,
+fzf ranks matching rows. The list is a snapshot; **Ctrl-r** refreshes
+it while keeping your query. Seen but unanswered dialogs still show Needs input.
+Done means unread stopped output, not task success. Opening or cancelling the
+popup does not clear attention; visiting a window uses the usual acknowledgement
+rules below.
+
+Known Claude, Codex, Pi, and Cursor processes remain listed when idle. Native
+Claude executables named with a version number are recognized too. Ambiguous
+`node`, `bun`, and `uv` processes appear only with an existing attention state,
+using their process name rather than guessing an agent. These inherit the
+monitor's heuristic limitations: a state is not proof of an AI process.
+Pane titles alone do not establish agent identity. Long names can extend beyond
+the popup width; wide Unicode characters can misalign the columns.
+
+Linked panes appear once, preferring their name in your current session. Enter
+rechecks pane identity, follows moved panes, preserves zoom, and reports a closed
+pane instead of selecting something else. Navigation targets the invoking
+client. Clients sharing the selected session share its active window and pane.
+Linked windows also share their active pane across sessions, so selecting another
+split changes that pane for other clients viewing the same linked window; their
+session attachments stay unchanged.
+
+### Installation
+
+The popup needs [Python 3.8+](https://docs.python.org/3/whatsnew/3.8.html),
+[fzf 0.59+](https://github.com/junegunn/fzf/releases/tag/0.59.0), and
+[tmux 3.3+](https://github.com/tmux/tmux/blob/3.3/CHANGES).
+The helper must be linked on **each machine** before loading the new binding.
+From the permanent dotfiles checkout, create the link if the destination is free:
+
+```sh
+mkdir -p "$HOME/.config/tmux/scripts"
+ln -s "$PWD/stow/scripts/tmux-agent-picker" "$HOME/.config/tmux/scripts/tmux-agent-picker"
+```
+
+If the link already exists, inspect its target instead of overwriting it. The
+binding calls Python explicitly; the helper does not need a separate PATH entry.
+Do not use a temporary worktree as the installed source. Reload with `prefix q`
+after installing the helper and applying the config. A missing fzf executable
+produces a tmux message. No agents produces an empty-state message.
+
 ## Acknowledgement and persistence
 
 Both unread indicators clear when that window is shown in a focused attached tmux client,

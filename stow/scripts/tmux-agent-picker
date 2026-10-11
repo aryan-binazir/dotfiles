@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""Find an open AI pane in this tmux server."""
+
+import argparse
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+
+
+FIELDS = ('pane_id', 'session_id', 'window_id', 'window_index', 'pane_index',
+          'session_name', 'window_name', 'pane_current_command',
+          '@ai_attention_state')
+
+
+def tmux(socket, *args):
+    return subprocess.run(['tmux', '-S', socket, *args], check=True,
+                          text=True, errors='replace', capture_output=True, timeout=5).stdout.rstrip('\n')
+
+
+def panes(socket):
+    fmt = '\t'.join('#{s|[\x01-\x1f\x7f]| |:' + field + '}' for field in FIELDS)
+    rows = tmux(socket, 'list-panes', '-a', '-F', fmt)
+    return [dict(zip(FIELDS, (''.join(c if c.isprintable() else ' ' for c in field) for field in fields)))
+            for row in rows.split('\n') if len(fields := row.split('\t')) == len(FIELDS)]
+
+
+def status(state):
+    if re.fullmatch(r'blocked(-seen)?(-quiet[12])?', state):
+        return 0, 'Needs input'
+    if state == 'done':
+        return 1, 'Done'
+    if state in ('working', 'quiet1', 'quiet2'):
+        return 2, 'Working'
+    return 3, 'Idle'
+
+
+def client_session(socket, client):
+    rows = tmux(socket, 'list-clients', '-F', '#{client_name}\t#{session_id}')
+    for row in rows.splitlines():
+        name, session = row.split('\t', 1)
+        if name == client:
+            return session
+    raise ValueError('Client detached')
+
+
+def listing(socket, client=None):
+    current = client_session(socket, client) if client else ''
+    snapshot = sorted(panes(socket), key=lambda p: (p['session_id'] != current, int(p['session_id'][1:])))
+    rows = []
+    seen = set()
+    for pane in snapshot:
+        if pane['pane_id'] in seen:
+            continue
+        seen.add(pane['pane_id'])
+        command = pane['pane_current_command']
+        priority, label = status(pane['@ai_attention_state'])
+        if command == 'claude' or re.fullmatch(r'\d+\.\d+\.\d+', command):
+            agent = 'Claude'
+        elif command.startswith('codex'):
+            agent = 'Codex'
+        elif command == 'pi':
+            agent = 'Pi'
+        elif command == 'cursor-agent':
+            agent = 'Cursor'
+        elif command in ('node', 'bun', 'uv') and priority < 3:
+            agent = command
+        else:
+            continue
+        columns = (pane['session_name'],
+                   f"{pane['window_index']}:{pane['window_name']} / {pane['pane_index']}", agent, label)
+        rows.append((priority, pane, columns))
+    rows.sort(key=lambda row: (row[0], row[1]['session_name'], int(row[1]['window_index']), int(row[1]['pane_index'])))
+    header = ('SESSION', 'WINDOW', 'AGENT', 'STATUS')
+    widths = [max(len(columns[i]) for columns in [header] + [row[2] for row in rows]) for i in range(4)]
+    def render(columns):
+        return '  '.join(value.ljust(width) for value, width in zip(columns, widths)).rstrip()
+    lines = ['\t\t \t' + render(header)]
+    lines.extend(f"{pane['pane_id']}\t{pane['session_id']}\t{i if i < 10 else ' '}\t{render(columns)}"
+                 for i, (_, pane, columns) in enumerate(rows))
+    return '\n'.join(lines) + '\n'
+
+
+def message(socket, client, text):
+    tmux(socket, 'display-message', '-c', client, '-d', '3000', text)
+
+
+def open_picker(socket, client):
+    if not shutil.which('fzf'):
+        message(socket, client, 'Agent picker requires fzf on PATH')
+        return
+    command = shlex.join([sys.executable, str(Path(__file__).resolve()), 'pick',
+                          '--socket', socket, '--client', client])
+    subprocess.run(['tmux', '-S', socket, 'display-popup', '-c', client,
+                    '-E', '-w', '85%', '-h', '65%', '-x', 'C', '-y', 'C',
+                    '-T', ' Agents ', command], check=True, capture_output=True)
+
+
+def pick(socket, client):
+    snapshot = listing(socket, client)
+    if len(snapshot.splitlines()) <= 1:
+        message(socket, client, 'No AI panes detected')
+        return
+    env = {**os.environ, 'FZF_DEFAULT_OPTS': '', 'FZF_DEFAULT_OPTS_FILE': '',
+           'PICKER_PY': sys.executable, 'PICKER_SELF': str(Path(__file__).resolve()),
+           'PICKER_SOCKET': socket, 'PICKER_CLIENT': client}
+    shortcuts = 'j,k,/,0,1,2,3,4,5,6,7,8,9'
+    navigation_header = 'j/k: move  0-9: open  /: search  Enter: open  Ctrl-r: refresh  Esc: close'
+    search_header = 'Type to filter  Enter: open  Ctrl-r: refresh  Esc: back'
+    leave_search = (f'search()+hide-input+rebind({shortcuts})'
+                    f'+change-header({navigation_header})')
+    escape = ('if [ "$FZF_INPUT_STATE" = enabled ]; then printf %s '
+              + shlex.quote(leave_search) + '; else printf abort; fi')
+    number_bindings = []
+    for i in range(10):
+        select_row = rf'pos({i + 1})+transform:case \{{3}} in {i}) printf accept;; esac'
+        action = f'if [ "$FZF_MATCH_COUNT" -gt {i} ]; then printf %s {shlex.quote(select_row)}; fi'
+        number_bindings.extend(['--bind', f'{i}:transform:{action}'])
+    result = subprocess.run(['fzf', '--delimiter=\t', '--with-nth=3..', '--nth=2..', '--tabstop=3', '--header-lines=1',
+                             '--with-shell=sh -c', '--layout=reverse', '--info=inline', '--no-multi', '--tiebreak=index',
+                             '--no-input', '--prompt=Search agents > ',
+                             '--bind=j:down,k:up',
+                             f'--bind=/:show-input+clear-query+unbind({shortcuts})+change-header({search_header})',
+                             f'--bind=esc:transform:{escape}',
+                             '--bind=ctrl-r:reload:"$PICKER_PY" "$PICKER_SELF" list',
+                             f'--header={navigation_header}', *number_bindings],
+                            input=snapshot, stdout=subprocess.PIPE, text=True, env=env)
+    if result.returncode in (1, 130):
+        return
+    result.check_returncode()
+    pane_id, session_id, _ = result.stdout.rstrip('\n').split('\t', 2)
+    current = client_session(socket, client)
+    candidates = [p for p in panes(socket) if p['pane_id'] == pane_id]
+    candidates.sort(key=lambda p: (p['session_id'] != session_id, p['session_id'] != current,
+                                   int(p['session_id'][1:])))
+    if not candidates:
+        message(socket, client, 'That agent pane has closed')
+        return
+    pane = candidates[0]
+    target = f"{pane['session_id']}:{pane['window_id']}.{pane_id}"
+    try:
+        tmux(socket, 'switch-client', '-c', client, '-Z', '-t', target)
+    except subprocess.CalledProcessError:
+        message(socket, client, 'That agent pane moved or closed; reopen the picker')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=['list', 'open', 'pick'])
+    parser.add_argument('--socket', default=os.environ.get('PICKER_SOCKET'))
+    parser.add_argument('--client', default=os.environ.get('PICKER_CLIENT'))
+    args = parser.parse_args()
+    if not args.socket:
+        parser.error('--socket is required')
+    if args.command != 'list' and not args.client:
+        parser.error('--client is required for open and pick')
+    try:
+        if args.command == 'list':
+            print(listing(args.socket, args.client), end='')
+        elif args.command == 'open':
+            open_picker(args.socket, args.client)
+        else:
+            pick(args.socket, args.client)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        if args.client:
+            try:
+                message(args.socket, args.client, 'Agent picker could not run')
+            except (OSError, subprocess.SubprocessError):
+                pass
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
