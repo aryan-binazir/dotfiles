@@ -38,7 +38,12 @@ stops. The internal frame is not exported to new pane processes.
 
 `prefix b` opens a centered, searchable list of AI panes across the current tmux
 server. The columns are **Session**, **Window** (including pane index), **Agent**,
-and **Status**. It opens in navigation mode:
+and **Status**, with a **#** column labeling number shortcuts. Help stays at the
+bottom, leaving the column headers above the list.
+
+![Agent picker](images/tmux-agent-picker-symbols.png)
+
+It opens in navigation mode:
 
 - `j` moves down; `k` moves up. Arrow keys work too.
 - `0`–`9` immediately open the correspondingly labeled row. The first ten rows
@@ -55,10 +60,16 @@ Popups and tree preview borders use the terminal's default foreground and
 background. The shared config overrides tmux 3.8's gray defaults; older tmux
 versions quietly skip the new tree border option.
 
-The initial order is **Needs input**, **Done**, **Working**, then **Idle**. In search mode,
-fzf ranks matching rows. The list is a snapshot; **Ctrl-r** refreshes
-it while keeping your query. Seen but unanswered dialogs still show Needs input.
-Done means unread stopped output, not task success. Opening or cancelling the
+Status uses the same symbols as the tmux tabs: **!** needs input, **✓** marks
+unread stopped output, the spinner marks working, and idle is blank. Rows keep
+that priority order. In search mode, fzf ranks matching rows. While open, the
+picker reads the existing pane states and current spinner frame once a second.
+It prepares updates in the background and reloads only changed snapshots, so
+metadata queries do not block typing or movement. Overlapping polls are skipped.
+It preserves your query and highlighted pane across status changes and
+reordering. **Ctrl-r** also refreshes immediately. Closing the popup stops its
+refresh timer; the shared attention monitor continues unchanged. Status can be filtered by its symbol. Seen but unanswered
+dialogs still show **!**. **✓** does not mean task success. Opening or cancelling the
 popup does not clear attention; visiting a window uses the usual acknowledgement
 rules below.
 
@@ -81,7 +92,7 @@ session attachments stay unchanged.
 ### Installation
 
 The popup needs [Python 3.8+](https://docs.python.org/3/whatsnew/3.8.html),
-[fzf 0.59+](https://github.com/junegunn/fzf/releases/tag/0.59.0), and
+[fzf 0.73+](https://github.com/junegunn/fzf/releases/tag/v0.73.0), and
 [tmux 3.3+](https://github.com/tmux/tmux/blob/3.3/CHANGES).
 The helper must be linked on **each machine** before loading the new binding.
 From the permanent dotfiles checkout, create the link if the destination is free:
@@ -95,8 +106,8 @@ If the link already exists, inspect its target instead of overwriting it. The
 binding calls Python explicitly; the helper does not need a separate PATH entry.
 Do not use a temporary worktree as the installed source. Reload with `prefix q`
 after installing the helper and applying the config. A missing fzf executable
-produces a tmux message. With no agents, the popup stays open with an empty list;
-use Ctrl-r to load newly started agents or Escape to close it.
+produces a tmux message. With no agents, the popup stays open with an empty list and automatically loads
+newly started agents; use Escape to close it.
 
 ## Acknowledgement and persistence
 

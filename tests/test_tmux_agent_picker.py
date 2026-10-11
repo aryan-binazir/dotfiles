@@ -130,6 +130,17 @@ class PickerTest(unittest.TestCase):
             args += ['--client', client]
         return subprocess.run(args, env=self.env, text=True, capture_output=True, check=True, timeout=5).stdout
 
+    def test_reload_removes_four_split_shortcut_without_changing_panes(self):
+        before = self.tmux('list-panes', '-a', '-F', '#{pane_id}')
+        self.tmux('bind-key', 'g', 'split-window')
+        config = self.directory / 'remove-splits.conf'
+        config.write_text('\n'.join(line for line in CONFIG.read_text().splitlines()
+                                    if line.startswith(('bind g ', 'unbind g'))) + '\n')
+        self.tmux('source-file', str(config))
+        self.assertNotRegex(self.tmux('list-keys', '-T', 'prefix'),
+                            r'(?m)^bind-key\s+-T\s+prefix\s+g\s')
+        self.assertEqual(self.tmux('list-panes', '-a', '-F', '#{pane_id}'), before)
+
     def test_config_restores_terminal_colors_after_gray_popup_defaults(self):
         options = ('popup-style', 'popup-border-style', 'tree-mode-border-style')
         supported = []
@@ -187,9 +198,9 @@ class PickerTest(unittest.TestCase):
         os.write(fd, b'9')
         self.keys_and_wait(fd, b'/jk/9', '1/2')
         self.assertEqual(self.client_state(client), before)
-        self.keys_and_wait(fd, b'\x1b', '0-9:')
+        self.keys_and_wait(fd, b'\x1b', '0-9/Enter:')
         self.keys_and_wait(fd, b'/', '2/2')
-        self.keys_and_wait(fd, b'\x1b', '0-9:')
+        self.keys_and_wait(fd, b'\x1b', '0-9/Enter:')
         os.write(fd, b'0')
         self.until(lambda: self.client_state(client).split()[1] == first)
 
@@ -217,29 +228,39 @@ class PickerTest(unittest.TestCase):
         os.write(fd, b'\r')
         self.until(lambda: self.client_state(client).split()[1] == target)
 
+    def test_working_uses_current_tmux_spinner_frame_and_idle_has_no_marker(self):
+        pane = self.agent('claude', state='working')
+        self.tmux('set-environment', '-gh', 'TMUX_AI_SPINNER_FRAME', '⠹')
+        self.assertTrue(self.listing().splitlines()[1].endswith('⠹'))
+        self.tmux('set-environment', '-gu', 'TMUX_AI_SPINNER_FRAME')
+        self.assertTrue(self.listing().splitlines()[1].endswith('⡇'))
+        self.tmux('set-option', '-p', '-t', pane, '@ai_attention_state', '')
+        self.assertTrue(self.listing().splitlines()[1].endswith('Claude'))
+
     def test_lists_agents_in_column_and_attention_order(self):
         idle = self.agent('2.1.289', window='idle')
         working = self.agent('codex', session='bball', window='score', state='quiet1')
         done = self.agent('pi', window='config', state='done')
         blocked = self.agent('claude', session='ember', window='proposal', state='blocked-seen')
         rows = [line.split('\t') for line in self.listing().splitlines()]
+        self.assertEqual(rows[0][2], '#')
         self.assertIn('SESSION', rows[0][-1])
         self.assertRegex(rows[0][-1], r'SESSION\s+WINDOW\s+AGENT\s+STATUS')
         self.assertEqual([row[0] for row in rows[1:]], [blocked, done, working, idle])
-        for row, expected in zip(rows[1:], [('ember', 'proposal', 'Claude', 'Needs input'),
-                                          ('home', 'config', 'Pi', 'Done'),
-                                          ('bball', 'score', 'Codex', 'Working'),
-                                          ('home', 'idle', 'Claude', 'Idle')]):
+        for row, expected in zip(rows[1:], [('ember', 'proposal', 'Claude', '!'),
+                                          ('home', 'config', 'Pi', '✓'),
+                                          ('bball', 'score', 'Codex', '⡇'),
+                                          ('home', 'idle', 'Claude', '')]):
             self.assertTrue(all(value in row[-1] for value in expected), row)
 
     def test_ambiguous_commands_require_a_recognized_attention_state(self):
         known = self.agent('cursor-agent')
         ambiguous = self.agent('node')
-        states = [('blocked', 'Needs input'), ('blocked-quiet1', 'Needs input'),
-                  ('blocked-quiet2', 'Needs input'), ('blocked-seen', 'Needs input'),
-                  ('blocked-seen-quiet1', 'Needs input'), ('blocked-seen-quiet2', 'Needs input'),
-                  ('done', 'Done'), ('working', 'Working'), ('quiet1', 'Working'),
-                  ('quiet2', 'Working'), ('', None), ('unexpected', None)]
+        states = [('blocked', '!'), ('blocked-quiet1', '!'),
+                  ('blocked-quiet2', '!'), ('blocked-seen', '!'),
+                  ('blocked-seen-quiet1', '!'), ('blocked-seen-quiet2', '!'),
+                  ('done', '✓'), ('working', '⡇'), ('quiet1', '⡇'),
+                  ('quiet2', '⡇'), ('', None), ('unexpected', None)]
         for state, label in states:
             with self.subTest(state=state):
                 self.tmux('set-option', '-p', '-t', ambiguous, '@ai_attention_state', state)
@@ -255,7 +276,7 @@ class PickerTest(unittest.TestCase):
         for command in ('node', 'bun', 'uv'):
             pane = self.agent(command)
             self.tmux('select-pane', '-t', pane, '-T', 'π - project')
-            for state, label in [('', None), ('unexpected', None), ('done', 'Done')]:
+            for state, label in [('', None), ('unexpected', None), ('done', '✓')]:
                 with self.subTest(command=command, state=state):
                     self.tmux('set-option', '-p', '-t', pane, '@ai_attention_state', state)
                     rows = {row.split('\t')[0]: row for row in self.listing().splitlines()[1:]}
@@ -278,8 +299,8 @@ class PickerTest(unittest.TestCase):
         self.agent('codex', state='done')
         output = self.listing()
         self.assertEqual(len(output.splitlines()), 3)
-        self.assertRegex(output, r'Claude\s+Idle')
-        self.assertRegex(output, r'Codex\s+Done')
+        self.assertRegex(output, r'Claude(?:\n|$)')
+        self.assertRegex(output, r'Codex\s+✓')
 
     def test_linked_panes_appear_once_in_the_invoking_clients_session(self):
         pane = self.agent('codex', window='same')
@@ -303,10 +324,28 @@ class PickerTest(unittest.TestCase):
         before = self.client_state(observer)
         self.open_popup(fd)
         self.keys_and_wait(fd, b'/' + pane.encode(), '0/2')
-        self.keys_and_wait(fd, b'\x15ember proposal Codex Working', '1/2')
+        self.keys_and_wait(fd, '\x15ember proposal Codex ⡇'.encode(), '1/2')
         os.write(fd, b'\r')
         self.until(lambda: self.client_state(client).split()[1] == pane)
         self.assertEqual(self.client_state(observer), before)
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_automatic_refresh_preserves_query_and_highlighted_pane_after_reordering(self):
+        self.agent('codex', window='proposal-a', state='working')
+        target = self.agent('pi', window='proposal-b', state='working')
+        self.agent('claude', window='outside', state='blocked')
+        self.load_binding()
+        fd, client = self.attach()
+        self.open_popup(fd)
+        self.keys_and_wait(fd, b'/proposal', '2/3')
+        self.output[fd] = b''
+        os.write(fd, b'\x1b[B')
+        self.until(lambda: bool(self.output[fd]))
+        self.output[fd] = b''
+        self.tmux('set-option', '-p', '-t', target, '@ai_attention_state', 'done')
+        self.until(lambda: '✓' in self.output[fd].decode(errors='replace'))
+        os.write(fd, b'\r')
+        self.until(lambda: self.client_state(client).split()[1] == target)
 
     @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
     def test_manual_refresh_updates_status_and_preserves_the_query(self):
@@ -315,11 +354,71 @@ class PickerTest(unittest.TestCase):
         self.load_binding()
         fd, client = self.attach()
         self.open_popup(fd)
-        self.keys_and_wait(fd, b'/proposal Done', '0/2')
+        self.keys_and_wait(fd, '/proposal ✓'.encode(), '0/2')
         self.tmux('set-option', '-p', '-t', pane, '@ai_attention_state', 'done')
         self.keys_and_wait(fd, b'\x12', '1/2')
         os.write(fd, b'\r')
         self.until(lambda: self.client_state(client).split()[1] == pane)
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_slow_refresh_keeps_navigation_and_accept_responsive(self):
+        self.agent('claude', window='first')
+        target = self.agent('codex', window='second')
+        self.agent('pi', window='third')
+        commands = self.directory / 'commands'
+        commands.mkdir()
+        pending = self.directory / 'pending'
+        started = self.directory / 'started'
+        wrapper = commands / 'tmux'
+        wrapper.write_text('#!/bin/sh\n'
+                           'if [ "$3" = list-panes ] && [ -f "$PICKER_PENDING" ] && [ ! -f "$PICKER_STARTED" ]; then\n'
+                           '  printf . >> "$PICKER_STARTED"\n'
+                           '  while [ -f "$PICKER_PENDING" ]; do sleep .01; done\n'
+                           'fi\nexec ' + shlex.quote(shutil.which('tmux')) + ' "$@"\n')
+        wrapper.chmod(0o755)
+        self.tmux('set-environment', '-g', 'PATH', str(commands) + ':' + self.env['PATH'])
+        self.tmux('set-environment', '-g', 'PICKER_PENDING', str(pending))
+        self.tmux('set-environment', '-g', 'PICKER_STARTED', str(started))
+        self.load_binding()
+        fd, client = self.attach()
+        for keys in (b'j\r', b'/second\r'):
+            with self.subTest(keys=keys):
+                pending.unlink(missing_ok=True)
+                started.unlink(missing_ok=True)
+                self.open_popup(fd)
+                pending.touch()
+                os.write(fd, b'\x12')
+                self.until(started.exists)
+                os.write(fd, keys)
+                self.until(lambda: self.client_state(client).split()[1] == target, timeout=2)
+                self.assertTrue(pending.exists())
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_snapshot_files_are_removed_after_forced_popup_close_and_detach(self):
+        self.agent('codex')
+        temporary = self.directory / 'popup-temporary'
+        temporary.mkdir()
+        self.tmux('set-environment', '-g', 'TMPDIR', str(temporary))
+        fd, client = self.attach()
+        for close in ('popup', 'detach'):
+            with self.subTest(close=close):
+                self.output[fd] = b''
+                process = subprocess.Popen([sys.executable, str(SCRIPT), 'open', '--socket', self.socket,
+                                            '--client', client], env={**self.env, 'TMPDIR': str(temporary)},
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                try:
+                    self.until(lambda: b'SESSION' in self.output[fd] and b'Enter:' in self.output[fd])
+                    self.assertTrue(list(temporary.iterdir()))
+                    if close == 'popup':
+                        self.tmux('display-popup', '-C', '-c', client)
+                    else:
+                        self.tmux('detach-client', '-t', client)
+                    process.communicate(timeout=5)
+                    self.assertEqual(list(temporary.iterdir()), [])
+                finally:
+                    if process.poll() is None:
+                        process.terminate()
+                        process.communicate(timeout=5)
 
     def test_labels_cannot_inject_terminal_controls_or_break_rows(self):
         name = 'quoted " $(touch never) \u202e'
@@ -416,9 +515,9 @@ class PickerTest(unittest.TestCase):
         self.load_binding(source)
         fd, client = self.attach()
         self.open_popup(fd)
-        self.keys_and_wait(fd, b'/Done', '0/1')
+        self.keys_and_wait(fd, '/✓'.encode(), '0/1')
         self.tmux('set-option', '-p', '-t', pane, '@ai_attention_state', 'done')
-        self.keys_and_wait(fd, b'\x12', '1/1')
+        self.keys_and_wait(fd, b'\x12', 'Codex')
         os.write(fd, b'\r')
         self.until(lambda: self.client_state(client).split()[1] == pane)
 
@@ -433,16 +532,32 @@ class PickerTest(unittest.TestCase):
         self.assertEqual(result.stdout + result.stderr, '')
         self.assertIn('Agent picker requires fzf on PATH', self.tmux('show-messages', '-t', client))
 
+    def test_old_fzf_reports_upgrade_before_opening_a_popup(self):
+        _, client = self.attach()
+        commands = self.directory / 'bin'
+        commands.mkdir()
+        (commands / 'tmux').symlink_to(shutil.which('tmux'))
+        fzf = commands / 'fzf'
+        fzf.write_text("#!/bin/sh\nprintf '0.72.0\\n'\n")
+        fzf.chmod(0o755)
+        result = subprocess.run([sys.executable, str(SCRIPT), 'open', '--socket', self.socket,
+                                 '--client', client], env={**self.env, 'PATH': str(commands)},
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('Agent picker requires fzf 0.73+; upgrade fzf',
+                      self.tmux('show-messages', '-t', client))
+
     @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
-    def test_empty_picker_stays_open_and_can_refresh_new_agents(self):
+    def test_empty_picker_stays_open_and_automatically_loads_new_agents(self):
         self.load_binding()
         fd, client = self.attach()
         before = self.client_state(client)
         self.open_popup(fd)
         self.keys_and_wait(fd, b'/', '0/0')
         self.assertEqual(self.client_state(client), before)
+        self.output[fd] = b''
         pane = self.agent('codex', window='new-agent')
-        self.keys_and_wait(fd, b'\x12', 'new-agent')
+        self.until(lambda: b'new-agent' in self.output[fd])
         os.write(fd, b'\r')
         self.until(lambda: self.client_state(client).split()[1] == pane)
 
