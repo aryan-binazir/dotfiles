@@ -13,7 +13,7 @@ import sys
 
 FIELDS = ('pane_id', 'session_id', 'window_id', 'window_index', 'pane_index',
           'session_name', 'window_name', 'pane_current_command',
-          '@ai_attention_state')
+          '@ai_attention_state', 'TMUX_AI_SPINNER_FRAME')
 
 
 def tmux(socket, *args):
@@ -28,14 +28,14 @@ def panes(socket):
             for row in rows.split('\n') if len(fields := row.split('\t')) == len(FIELDS)]
 
 
-def status(state):
+def status(state, frame):
     if re.fullmatch(r'blocked(-seen)?(-quiet[12])?', state):
-        return 0, 'Needs input'
+        return 0, '!'
     if state == 'done':
-        return 1, 'Done'
+        return 1, '✓'
     if state in ('working', 'quiet1', 'quiet2'):
-        return 2, 'Working'
-    return 3, 'Idle'
+        return 2, frame or '⡇'
+    return 3, ''
 
 
 def client_session(socket, client):
@@ -57,7 +57,7 @@ def listing(socket, client=None):
             continue
         seen.add(pane['pane_id'])
         command = pane['pane_current_command']
-        priority, label = status(pane['@ai_attention_state'])
+        priority, label = status(pane['@ai_attention_state'], pane['TMUX_AI_SPINNER_FRAME'])
         if command == 'claude' or re.fullmatch(r'\d+\.\d+\.\d+', command):
             agent = 'Claude'
         elif command.startswith('codex'):
@@ -77,8 +77,8 @@ def listing(socket, client=None):
     header = ('SESSION', 'WINDOW', 'AGENT', 'STATUS')
     widths = [max(len(columns[i]) for columns in [header] + [row[2] for row in rows]) for i in range(4)]
     def render(columns):
-        return '  '.join(value.ljust(width) for value, width in zip(columns, widths)).rstrip()
-    lines = ['\t\t \t' + render(header)]
+        return '    '.join(value.ljust(width) for value, width in zip(columns, widths)).rstrip()
+    lines = ['\t\t#\t' + render(header)]
     lines.extend(f"{pane['pane_id']}\t{pane['session_id']}\t{i if i < 10 else ' '}\t{render(columns)}"
                  for i, (_, pane, columns) in enumerate(rows))
     return '\n'.join(lines) + '\n'
@@ -91,6 +91,12 @@ def message(socket, client, text):
 def open_picker(socket, client):
     if not shutil.which('fzf'):
         message(socket, client, 'Agent picker requires fzf on PATH')
+        return
+    version = subprocess.run(['fzf', '--version'], check=True, text=True,
+                             capture_output=True, timeout=5).stdout
+    match = re.match(r'(\d+)\.(\d+)', version)
+    if not match or tuple(map(int, match.groups())) < (0, 73):
+        message(socket, client, 'Agent picker requires fzf 0.73+; upgrade fzf')
         return
     command = shlex.join([sys.executable, str(Path(__file__).resolve()), 'pick',
                           '--socket', socket, '--client', client])
@@ -105,10 +111,10 @@ def pick(socket, client):
            'PICKER_PY': sys.executable, 'PICKER_SELF': str(Path(__file__).resolve()),
            'PICKER_SOCKET': socket, 'PICKER_CLIENT': client}
     shortcuts = 'j,k,/,0,1,2,3,4,5,6,7,8,9'
-    navigation_header = 'j/k: move  0-9: open  /: search  Enter: open  Ctrl-r: refresh  Esc: close'
-    search_header = 'Type to filter  Enter: open  Ctrl-r: refresh  Esc: back'
+    navigation_help = 'j/k move  0-9/Enter: open  / search  Ctrl-r refresh  Esc close'
+    search_help = 'Type to filter  Enter: open  Ctrl-r refresh  Esc back'
     leave_search = (f'search()+hide-input+rebind({shortcuts})'
-                    f'+change-header({navigation_header})')
+                    f'+change-footer({navigation_help})')
     escape = ('if [ "$FZF_INPUT_STATE" = enabled ]; then printf %s '
               + shlex.quote(leave_search) + '; else printf abort; fi')
     number_bindings = []
@@ -118,12 +124,13 @@ def pick(socket, client):
         number_bindings.extend(['--bind', f'{i}:transform:{action}'])
     result = subprocess.run(['fzf', '--delimiter=\t', '--with-nth=3..', '--nth=2..', '--tabstop=3', '--header-lines=1',
                              '--with-shell=sh -c', '--layout=reverse', '--info=inline', '--no-multi', '--tiebreak=index',
-                             '--no-input', '--prompt=Search agents > ',
+                             '--no-input', '--prompt=Search agents > ', '--track', '--id-nth=1',
                              '--bind=j:down,k:up',
-                             f'--bind=/:show-input+clear-query+unbind({shortcuts})+change-header({search_header})',
+                             f'--bind=/:show-input+clear-query+unbind({shortcuts})+change-footer({search_help})',
                              f'--bind=esc:transform:{escape}',
-                             '--bind=ctrl-r:reload:"$PICKER_PY" "$PICKER_SELF" list',
-                             f'--header={navigation_header}', *number_bindings],
+                             '--bind=every(1):reload-sync:"$PICKER_PY" "$PICKER_SELF" list',
+                             '--bind=ctrl-r:reload-sync:"$PICKER_PY" "$PICKER_SELF" list',
+                             f'--footer={navigation_help}', '--footer-border=none', *number_bindings],
                             input=snapshot, stdout=subprocess.PIPE, text=True, env=env)
     if result.returncode in (1, 130):
         return
