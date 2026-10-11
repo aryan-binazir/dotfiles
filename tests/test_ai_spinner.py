@@ -149,7 +149,6 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         return [json.loads(line) for line in self.notifications.read_text().splitlines()]
 
     def recorded_tools(self, *names, delays=None):
-        """Log each invocation of the named commands; arrival times are stamped by a watcher thread."""
         tools = self.directory / "recorded-tools"
         tools.mkdir()
         self.invocations = self.directory / "invocations"
@@ -722,10 +721,13 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.working()
         self.until(lambda: bool(self.icon()), "idle monitor still detects new work")
         time.sleep(0.5)
-        before = len(self.stamped)
-        time.sleep(2)
-        frames = sum(line == "sleep 0.25" for _, line in self.stamped[before:])
-        self.assertGreaterEqual(frames, 6, "visible work animates about four times a second")
+        changes, previous, deadline = 0, None, time.monotonic() + 2
+        while time.monotonic() < deadline:
+            frame = self.tmux("show-environment", "-gh", "TMUX_AI_SPINNER_FRAME")
+            changes += previous is not None and frame != previous
+            previous = frame
+            time.sleep(0.03)
+        self.assertGreaterEqual(changes, 6, "visible work animates about four times a second")
 
     def test_slow_idle_scans_keep_their_one_second_cadence(self):
         executable = self.directory / "claude"

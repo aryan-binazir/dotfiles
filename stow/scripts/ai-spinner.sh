@@ -171,7 +171,6 @@ apply_scan() {
         rm -f "$scan_result" "$scan_ready"
         return
     fi
-    # One tmux process snapshots panes, windows, sessions, and clients per scan.
     snapshot=$(tmux list-panes -a -F 'P|#{pane_id}=#{@ai_attention_state}|' ';' \
         list-windows -a -F 'W#{window_id}' ';' \
         list-sessions -F 'S#{session_id}' ';' \
@@ -358,13 +357,16 @@ while :; do
     else
         rendered=$next_rendered
     fi
-    step=1
-    # Once a scan is applied with nothing to animate, sleep through to the next scan tick.
-    if [ -z "$scan_pid" ] && { [ -z "$working" ] || [ -z "$clients" ]; }; then
-        step=$((4 - tick % 4))
+    animating=""
+    [ -n "$working" ] && [ -n "$clients" ] && animating=1
+    ticks_until_scan=$((4 - tick % 4))
+    if [ -n "$scan_pid" ] || [ -n "$animating" ]; then
+        ticks_to_sleep=1
+    else
+        ticks_to_sleep=$ticks_until_scan
     fi
-    tick=$((tick + step))
-    case $step in
+    tick=$((tick + ticks_to_sleep))
+    case $ticks_to_sleep in
     1) sleep 0.25 ;;
     2) sleep 0.5 ;;
     *) sleep 0.75 ;;
