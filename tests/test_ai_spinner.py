@@ -148,32 +148,17 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
             return []
         return [json.loads(line) for line in self.notifications.read_text().splitlines()]
 
-    def recorded_tools(self, *names, delays=None):
+    def recorded_tools(self, *names):
         tools = self.directory / "recorded-tools"
         tools.mkdir()
         self.invocations = self.directory / "invocations"
-        self.invocations.touch()
         for name in names:
             real = shutil.which(name)
             self.assertIsNotNone(real)
-            delay = f"sleep {delays[name]}\n" if delays and name in delays else ""
             wrapper = tools / name
             wrapper.write_text(f"#!/bin/sh\nprintf '%s\\n' \"{name} $*\" >> {shlex.quote(str(self.invocations))}\n"
-                               f"{delay}exec {shlex.quote(real)} \"$@\"\n")
+                               f"exec {shlex.quote(real)} \"$@\"\n")
             wrapper.chmod(0o755)
-        self.stamped = []
-        stop = threading.Event()
-        self.addCleanup(stop.set)
-        def watch():
-            with open(self.invocations, errors="replace") as log:
-                pending = ""
-                while not stop.is_set():
-                    pending += log.read()
-                    now = time.monotonic()
-                    *lines, pending = pending.split("\n")
-                    self.stamped.extend((now, line) for line in lines)
-                    time.sleep(0.005)
-        threading.Thread(target=watch, daemon=True).start()
         return {"PATH": f"{tools}:{self.env['PATH']}"}
 
     def invocation_lines(self):
@@ -701,48 +686,52 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
                 self.assertIn(command, line, "pane, window, session, and client snapshots share one tmux process")
         self.assertFalse([line for line in self.invocation_lines() if line.startswith("sort ")])
 
-    def test_idle_monitor_wakes_less_often_without_slowing_scans(self):
-        env = self.recorded_tools("tmux", "sleep")
-        self.attach()
-        daemon = self.start_daemon(env)
-        self.until(lambda: "@ai_spinner_s" in self.tmux("show-options", "-t", self.session), "initial display")
-        before = len(self.stamped)
-        time.sleep(3)
-        window = self.stamped[before:]
-        sleeps = sum(line.startswith("sleep ") for _, line in window)
-        scans = [at for at, line in window if line.startswith("tmux ") and "pane_title" in line]
-        applies = [at for at, line in window if line.startswith("tmux ") and "list-clients" in line]
-        self.assertLessEqual(sleeps, 9, "idle monitoring must not wake at animation rate")
-        self.assertGreaterEqual(len(scans), 2, "detection keeps its one-second cadence")
-        for started in scans[:-1]:
-            applied = next(at for at in applies if at > started)
-            self.assertLess(applied - started, 0.6, "an idle scan is applied about a frame after it starts")
-        self.assertIsNone(daemon.poll())
-        self.working()
-        self.until(lambda: bool(self.icon()), "idle monitor still detects new work")
-        time.sleep(0.5)
-        changes, previous, deadline = 0, None, time.monotonic() + 2
-        while time.monotonic() < deadline:
-            frame = self.tmux("show-environment", "-gh", "TMUX_AI_SPINNER_FRAME")
-            changes += previous is not None and frame != previous
-            previous = frame
-            time.sleep(0.03)
-        self.assertGreaterEqual(changes, 6, "visible work animates about four times a second")
-
-    def test_slow_idle_scans_keep_their_one_second_cadence(self):
-        executable = self.directory / "claude"
+    def echo_agent(self, name="claude"):
+        executable = self.directory / name
         copy_shell(executable)
-        self.tmux("new-window", "-d", "-t", "test",
-                  shlex.join([str(executable), "-c", "printf 'Ready\\n'; while IFS= read -r line; do :; done"]))
-        env = self.recorded_tools("tmux", "awk", delays={"awk": 0.6})
+        body = "while IFS= read -r line; do printf '\\033[2J\\033[H%s\\n' \"$line\"; done"
+        pane = self.tmux("new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "test",
+                         shlex.join([str(executable), "-c", body])).strip()
+        self.tmux("select-pane", "-t", pane, "-T", "✳ Claude")
+        self.until(lambda: self.tmux("display-message", "-p", "-t", pane,
+                                    "#{pane_current_command}").strip() == name, "agent foreground command")
+        return pane
+
+    def captures(self):
+        return sum(line.startswith("tmux ") and "capture-pane" in line for line in self.invocation_lines())
+
+    def test_quiet_agent_screen_is_not_recaptured(self):
+        self.echo_agent()
+        env = self.recorded_tools("tmux")
         self.attach()
         daemon = self.start_daemon(env)
-        self.until(lambda: "@ai_spinner_s" in self.tmux("show-options", "-t", self.session), "initial display")
-        before = len(self.invocation_lines())
-        time.sleep(4)
-        scans = sum(line.startswith("tmux ") and "pane_title" in line for line in self.invocation_lines()[before:])
-        self.assertGreaterEqual(scans, 3, "a scan applied late must not postpone the next scan")
+        self.until(lambda: self.captures() >= 1, "agent captured")
+        time.sleep(2.5)
+        before = self.captures()
+        time.sleep(3)
+        self.assertEqual(self.captures(), before, "an agent without new output keeps its previous verdict")
         self.assertIsNone(daemon.poll())
+
+    def test_agent_changes_are_seen_even_right_after_a_capture(self):
+        pane = self.echo_agent()
+        env = self.recorded_tools("tmux")
+        self.start_daemon(env)
+        state = lambda: self.tmux("display-message", "-p", "-t", pane, "#{@ai_attention_state}").strip()
+        busy = "✻ Cogitating… (37s · ↓ 1.8k tokens)"
+        deadline = time.monotonic() + 8
+        while state() != "working":
+            self.assertLess(time.monotonic(), deadline, "agent never seen working")
+            self.tmux("send-keys", "-t", pane, busy, "Enter")
+            time.sleep(0.1)
+        before = self.captures()
+        while self.captures() == before:
+            self.assertLess(time.monotonic(), deadline, "no capture while working")
+            self.tmux("send-keys", "-t", pane, busy, "Enter")
+            time.sleep(0.02)
+        self.tmux("send-keys", "-t", pane, "✻ Worked for 37s", "Enter")
+        self.until(lambda: self.icon(target=pane) == "✓", "output in the same second as a capture is not cached")
+        self.tmux("select-pane", "-t", pane, "-T", "⠋ Claude")
+        self.until(lambda: state() == "working", "a title change without output is still seen")
 
     def test_completion_stays_visible_and_sounds_once(self):
         self.working()
