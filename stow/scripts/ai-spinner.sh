@@ -67,7 +67,7 @@ scan_panes() {
         case $agent in
             codex* | node | bun | uv | pi | cursor-agent | claude | [0-9]*.[0-9]*.[0-9]*)
                 case $agent:$title in codex*:*'Action Required'* | node:*'Action Required'* | bun:*'Action Required'*)
-                    printf '%s|%s|%s|blocked\n' "$sess" "$win" "$pane"
+                    printf '%s|%s|%s|blocked|%s|\n' "$sess" "$win" "$pane" "$cmd"
                     continue ;;
                 esac
                 # tmux records window activity in whole seconds, so a screen captured
@@ -81,12 +81,12 @@ $pane "}
 "*}
                     captured=${cached#* }
                     if [ "${captured#* }" = "$screen" ] && [ "$activity" -lt "${captured%% *}" ] 2>/dev/null; then
-                        printf '%s|%s|%s|%s|%s\n' "$sess" "$win" "$pane" "${cached%% *}" "$captured"
+                        printf '%s|%s|%s|%s|%s|%s\n' "$sess" "$win" "$pane" "${cached%% *}" "$cmd" "$captured"
                         continue
                     fi ;;
                 esac
                 memo="$now $screen"
-                content=$(tmux capture-pane -p -t "$pane" 2>/dev/null) || { printf '%s|%s|%s|unknown\n' "$sess" "$win" "$pane"; continue; }
+                content=$(tmux capture-pane -p -t "$pane" 2>/dev/null) || { printf '%s|%s|%s|unknown|%s|\n' "$sess" "$win" "$pane" "$cmd"; continue; }
                 # C locale makes '.' consume the third UTF-8 byte of a braille glyph.
                 w=$(printf '%s\n' "$content" | LC_ALL=C awk -v braille="$b0|$b1|$b2|$b3" -v command="$agent" -v title_busy="$title_busy" '
                     BEGIN {
@@ -165,7 +165,7 @@ $pane "}
                     }
                 ') ;;
         esac
-        printf '%s|%s|%s|%s|%s\n' "$sess" "$win" "$pane" "$w" "$memo"
+        printf '%s|%s|%s|%s|%s|%s\n' "$sess" "$win" "$pane" "$w" "$cmd" "$memo"
     done <<EOF
 $pane_rows
 EOF
@@ -190,7 +190,7 @@ apply_scan() {
         rm -f "$scan_result" "$scan_ready"
         return
     fi
-    snapshot=$(tmux list-panes -a -F 'P|#{pane_id}=#{@ai_attention_state}|' ';' \
+    snapshot=$(tmux list-panes -a -F 'P|#{pane_id}=#{@ai_attention_state}|#{pane_current_command}|#{@ai_agent_command}|' ';' \
         list-windows -a -F 'W#{window_id}' ';' \
         list-sessions -F 'S#{session_id}' ';' \
         list-clients -F 'C#{client_name}|#{window_id}|#{client_flags}|#{pane_in_mode}' 2>/dev/null) || return
@@ -226,7 +226,7 @@ EOF
     notify_panes=""
     processed_states=""
     next_verdicts=""
-    while IFS='|' read -r sess win pane busy memo; do
+    while IFS='|' read -r sess win pane busy command memo; do
         # Pane closure is not completion. Never update a reused/default target.
         case $pane in %*[!0-9]* | % | '') continue ;; %*) ;; *) continue ;; esac
         case $win in @*[!0-9]* | @ | '') continue ;; @*) ;; *) continue ;; esac
@@ -243,6 +243,18 @@ $pane $busy $memo"
             esac ;;
         esac
         previous=${entry%%|*}
+        metadata=${entry#*|}
+        current_command=${metadata%%|*}
+        metadata=${metadata#*|}
+        registered_agent=${metadata%%|*}
+        agent_command=""
+        case $current_command in
+        node | bun | uv)
+            [ "$registered_agent" != "$current_command" ] || agent_command=$current_command
+            if [ "$command" = "$current_command" ]; then
+                case $busy in 1 | blocked) agent_command=$current_command ;; esac
+            fi ;;
+        esac
         state=$previous
         case $busy in
         blocked)
@@ -275,15 +287,23 @@ $pane $busy $memo"
             blocked | blocked-quiet1 | blocked-quiet2) state=blocked-seen${state#blocked} ;;
             esac ;;
         esac
-        if [ "$state" != "$previous" ]; then
+        if [ "$state" != "$previous" ] || [ "$agent_command" != "$registered_agent" ]; then
             # A pane can move after the async sample. Check membership and
             # persist together in tmux, never acknowledging its old window.
             event_command=""
             if [ "$completed" = 1 ]; then
                 event_command="set-option -p -t $pane @ai_attention_event '$$:$tick' ; "
             fi
-            applied=$(tmux if-shell -F -t "$pane" "#{==:#{window_id},$win}" \
-                "set-option -p -t $pane @ai_attention_state '$state' ; ${event_command}display-message -p applied" \
+            identity_command=""
+            if [ "$agent_command" != "$registered_agent" ]; then
+                identity_command="set-option -p -t $pane @ai_agent_command '$agent_command' ; "
+            fi
+            membership="#{==:#{window_id},$win}"
+            if [ -n "$identity_command" ] && [ -n "$agent_command" ]; then
+                membership="#{&&:$membership,#{==:#{pane_current_command},$agent_command}}"
+            fi
+            applied=$(tmux if-shell -F -t "$pane" "$membership" \
+                "set-option -p -t $pane @ai_attention_state '$state' ; ${identity_command}${event_command}display-message -p applied" \
                 'display-message -p moved' 2>/dev/null) || continue
             [ "$applied" = applied ] || continue
             [ "$completed" = 0 ] || notify=1
@@ -291,7 +311,7 @@ $pane $busy $memo"
             1:done | 1:blocked) notify_panes="$notify_panes $pane" ;;
             esac
         fi
-        processed_states="$processed_states|$pane=$state|"
+        processed_states="$processed_states|$pane=$state|$current_command|$agent_command|"
         case $state in
         working | quiet1 | quiet2)
             case " $working " in *" $win "*) ;; *) working="$working $win" ;; esac

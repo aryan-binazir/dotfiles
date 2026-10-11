@@ -298,6 +298,15 @@ class PickerTest(unittest.TestCase):
                                           ('home', 'idle', 'Claude', '')]):
             self.assertTrue(all(value in row[-1] for value in expected), row)
 
+    def test_registered_runtime_agents_remain_listed_only_for_the_matching_command(self):
+        for command in ('node', 'bun', 'uv'):
+            with self.subTest(command=command):
+                pane = self.agent(command)
+                self.tmux('set-option', '-p', '-t', pane, '@ai_agent_command', command)
+                self.assertIn(pane + '\t', self.listing())
+                self.tmux('set-option', '-p', '-t', pane, '@ai_agent_command', 'other')
+                self.assertNotIn(pane + '\t', self.listing())
+
     def test_ambiguous_commands_require_a_recognized_attention_state(self):
         known = self.agent('cursor-agent')
         ambiguous = self.agent('node')

@@ -1214,6 +1214,38 @@ sys.exit(result.returncode)
         self.until(lambda: text.splitlines()[0] in self.tmux("capture-pane", "-p", "-t", pane), "synthetic agent screen")
         return pane, screen
 
+    def test_idle_runtime_agent_stays_in_picker_after_monitor_reload(self):
+        pane, screen = self.agent_screen("node", "ctrl+c to stop")
+        ordinary, _ = self.agent_screen("node", "Development server ready")
+        self.start_daemon()
+        self.until(lambda: self.tmux("show-options", "-pqv", "-t", pane,
+                                     "@ai_attention_state").strip() == "working", "runtime working")
+        self.redraw_agent(pane, screen, "Ready")
+        self.until(lambda: self.tmux("show-options", "-pqv", "-t", pane,
+                                     "@ai_attention_state").strip() == "done", "runtime done")
+        self.tmux("select-window", "-t", pane)
+        self.attach()
+        self.until(lambda: not self.tmux("show-options", "-pqv", "-t", pane,
+                                         "@ai_attention_state").strip(), "runtime acknowledged")
+        def listed():
+            return subprocess.check_output([sys.executable, str(ROOT / "stow/scripts/tmux-agent-picker"),
+                                            "list", "--socket", self.socket], text=True)
+        self.assertIn(pane + "\t", listed())
+        self.assertNotIn(ordinary + "\t", listed())
+        old = self.processes[0]
+        self.start_daemon()
+        self.until(lambda: old.poll() is not None, "previous monitor exits")
+        time.sleep(1.2)
+        self.assertIn(pane + "\t", listed())
+        writes = self.tmux("show-messages").count(" @ai_agent_command ")
+        time.sleep(1.3)
+        self.assertEqual(self.tmux("show-messages").count(" @ai_agent_command "), writes,
+                         "idle identity must not cause repeated writes")
+        self.tmux("respawn-pane", "-k", "-t", pane, "sleep 300")
+        self.until(lambda: not self.tmux("show-options", "-pqv", "-t", pane,
+                                         "@ai_agent_command").strip(), "agent identity cleared")
+        self.assertNotIn(pane + "\t", listed())
+
     def redraw_agent(self, pane, screen, text):
         screen.write_text(text + "\n")
         self.tmux("send-keys", "-t", pane, "Enter")

@@ -78,9 +78,14 @@ rules below.
 
 Known Claude, Codex, Pi, and Cursor processes remain listed when idle. Native
 Claude executables named with a version number are recognized too. Ambiguous
-`node`, `bun`, and `uv` processes appear only with an existing attention state,
-using their process name rather than guessing an agent. These inherit the
-monitor's heuristic limitations: a state is not proof of an AI process.
+`node`, `bun`, and `uv` processes appear with a recognized attention state,
+using their process name rather than guessing an agent. The existing monitor
+remembers a recognized runtime in `@ai_agent_command`, so it remains listed when
+idle and across reloads while its foreground command stays the same. Changing
+the command clears that identity. Unrecognized runtime processes stay excluded;
+already-idle processes need recognizable activity once to establish identity.
+This uses the existing scan and adds no polling. Recognition remains heuristic;
+a state is not proof of an AI process.
 Pane titles alone do not establish agent identity. Long names can extend beyond
 the popup width; wide Unicode characters can misalign the columns.
 

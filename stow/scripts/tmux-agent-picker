@@ -15,7 +15,7 @@ import tempfile
 
 FIELDS = ('pane_id', 'session_id', 'window_id', 'window_index', 'pane_index',
           'session_name', 'window_name', 'pane_current_command',
-          '@ai_attention_state', 'TMUX_AI_SPINNER_FRAME')
+          '@ai_attention_state', 'TMUX_AI_SPINNER_FRAME', '@ai_agent_command')
 
 
 def tmux(socket, *args):
@@ -68,7 +68,7 @@ def listing(socket, client=None):
             agent = 'Pi'
         elif command == 'cursor-agent':
             agent = 'Cursor'
-        elif command in ('node', 'bun', 'uv') and priority < 3:
+        elif command in ('node', 'bun', 'uv') and (priority < 3 or pane['@ai_agent_command'] == command):
             agent = command
         else:
             continue
