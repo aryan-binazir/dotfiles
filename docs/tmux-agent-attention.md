@@ -40,6 +40,8 @@ stops. The internal frame is not exported to new pane processes.
 server. The columns are **Session**, **Window** (number and name), **Agent**,
 and **Status**, with a **#** column labeling number shortcuts. Help stays at the
 bottom, leaving the column headers above the list.
+It reads the initial agent list and statuses before opening the popup, using the
+same pane metadata as subsequent refreshes.
 
 ![Agent picker](images/tmux-agent-picker-symbols.png)
 

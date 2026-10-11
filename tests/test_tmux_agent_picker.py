@@ -426,6 +426,44 @@ class PickerTest(unittest.TestCase):
                 self.assertTrue(pending.exists())
 
     @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_all_agent_statuses_are_loaded_before_the_popup_opens(self):
+        for command, state in (('claude', 'blocked'), ('pi', 'done'),
+                               ('codex', 'working'), ('cursor-agent', '')):
+            self.agent(command, state=state)
+        commands = self.directory / 'commands'
+        commands.mkdir()
+        temporary = self.directory / 'popup-temporary'
+        temporary.mkdir()
+        started = self.directory / 'popup-started'
+        release = self.directory / 'popup-release'
+        wrapper = commands / 'tmux'
+        wrapper.write_text('#!/bin/sh\n'
+                           'if [ "$3" = display-popup ]; then\n'
+                           '  printf . > "$PICKER_POPUP_STARTED"\n'
+                           '  while [ ! -f "$PICKER_POPUP_RELEASE" ]; do sleep .01; done\n'
+                           'fi\nexec ' + shlex.quote(shutil.which('tmux')) + ' "$@"\n')
+        wrapper.chmod(0o755)
+        self.tmux('set-environment', '-g', 'PATH', str(commands) + ':' + self.env['PATH'])
+        self.tmux('set-environment', '-g', 'TMPDIR', str(temporary))
+        self.tmux('set-environment', '-g', 'PICKER_POPUP_STARTED', str(started))
+        self.tmux('set-environment', '-g', 'PICKER_POPUP_RELEASE', str(release))
+        self.load_binding()
+        fd, client = self.attach()
+        self.output[fd] = b''
+        os.write(fd, b'\x02b')
+        try:
+            self.until(started.exists)
+            snapshots = list(temporary.glob('tmux-agent-picker-*/snapshot'))
+            self.assertEqual(len(snapshots), 1)
+            self.assertEqual(snapshots[0].read_text(), self.listing(client))
+            self.assertNotIn(b'SESSION', self.output[fd])
+            release.touch()
+            self.until(lambda: b'SESSION' in self.output[fd] and b'Enter:' in self.output[fd])
+            os.write(fd, b'\x1b')
+        finally:
+            release.touch()
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
     def test_snapshot_files_are_removed_after_forced_popup_close_and_detach(self):
         self.agent('codex')
         temporary = self.directory / 'popup-temporary'

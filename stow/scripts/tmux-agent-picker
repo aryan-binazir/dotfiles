@@ -118,6 +118,7 @@ def open_picker(socket, client):
         return
     with tempfile.TemporaryDirectory(prefix='tmux-agent-picker-') as directory:
         state = Path(directory) / 'snapshot'
+        state.write_text(listing(socket, client))
         command = shlex.join(['env', 'PICKER_STATE=' + str(state), sys.executable,
                               str(Path(__file__).resolve()), 'pick',
                               '--socket', socket, '--client', client])
@@ -127,7 +128,7 @@ def open_picker(socket, client):
 
 
 def pick(socket, client):
-    snapshot = listing(socket, client)
+    snapshot = Path(os.environ['PICKER_STATE']).read_text()
     active_pane = tmux(socket, 'display-message', '-p', '-c', client, '#{pane_id}')
     initial_position = next((i for i, row in enumerate(snapshot.splitlines()[1:], 1)
                              if row.split('\t', 1)[0] == active_pane), 1)
@@ -146,7 +147,6 @@ def pick(socket, client):
         select_row = rf'pos({i + 1})+transform:case \{{3}} in {i}) printf accept;; esac'
         action = f'if [ "$FZF_MATCH_COUNT" -gt {i} ]; then printf %s {shlex.quote(select_row)}; fi'
         number_bindings.extend(['--bind', f'{i}:transform:{action}'])
-    Path(env['PICKER_STATE']).write_text(snapshot)
     result = subprocess.run(['fzf', '--delimiter=\t', '--with-nth=3..', '--nth=2..', '--tabstop=3', '--header-lines=1',
                              '--with-shell=sh -c', '--layout=reverse', '--info=inline', '--no-multi', '--tiebreak=index',
                              '--no-input', '--prompt=Search agents > ', '--track', '--id-nth=1',
