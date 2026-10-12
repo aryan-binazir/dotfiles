@@ -53,7 +53,9 @@ provider calls, transcript reads, cache, or separate timer. Name metadata shares
 the existing five-second tmux query timeout; without a pane snapshot, the picker
 reports its usual error. Search matches the displayed name.
 
-![Agent picker](images/tmux-agent-picker-symbols.png)
+![Agent picker with age and output](images/tmux-agent-picker-age-output.png)
+
+The example uses synthetic conversations and output captured from the real popup.
 
 It opens in navigation mode with your current agent pane highlighted. If your
 current pane is not listed, it starts on the first row.
