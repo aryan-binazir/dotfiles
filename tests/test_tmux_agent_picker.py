@@ -370,6 +370,19 @@ class PickerTest(unittest.TestCase):
                     if not pasted:
                         self.assertIn('Checked the files.', row)
 
+    def test_pasted_rules_cannot_override_an_earlier_composer_prompt(self):
+        for command, prompt in (('claude', '❯'), ('codex', '›'), ('cursor-agent', '>')):
+            with self.subTest(command=command):
+                pane = self.agent(command, state='blocked')
+                screen = ('Checked the files.\n' + prompt + ' private draft\nprivate continuation\n'
+                          '──────────\nprivate middle\n──────────\nprivate tail')
+                body = "printf '%s\\n' " + shlex.quote(screen) + "; while IFS= read -r line; do :; done"
+                self.tmux('respawn-pane', '-k', '-t', pane,
+                          shlex.join([str(self.directory / command), '-c', body]))
+                self.until(lambda: 'private tail' in self.tmux('capture-pane', '-p', '-t', pane))
+                row = next(row for row in self.listing().splitlines() if row.startswith(pane + '\t'))
+                self.assertNotIn('private', row)
+
     @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
     def test_stalled_optional_capture_does_not_delay_popup_opening(self):
         pane = self.agent('claude', window='capture-stall', state='done')
@@ -722,9 +735,7 @@ class PickerTest(unittest.TestCase):
                 pending.touch()
                 self.until(started.exists)
                 if keys.startswith(b'/'):
-                    os.write(fd, keys[:-1])
-                    self.until(lambda: '1/3' in re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '',
-                                                      self.output[fd].decode(errors='replace')), timeout=1)
+                    self.keys_and_wait(fd, keys[:-1], 'second')
                     os.write(fd, keys[-1:])
                 else:
                     os.write(fd, keys)

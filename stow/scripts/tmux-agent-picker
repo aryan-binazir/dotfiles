@@ -101,7 +101,7 @@ def visible_output(socket, rows, retry=True):
         prompts = [i for i, line in enumerate(lines) if prompt and re.match('^' + prompt + r'($|\s)', line)]
         rules = [i for i, line in enumerate(lines) if re.match(r'^[─━]{3,}', line)]
         if len(rules) >= 2:
-            if len(rules) != 2:
+            if len(rules) != 2 or (prompts and prompts[0] < rules[0]):
                 continue
             end = rules[0]
         elif len(prompts) == 1:
