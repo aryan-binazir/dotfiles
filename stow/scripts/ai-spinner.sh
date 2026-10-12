@@ -190,13 +190,15 @@ apply_scan() {
         rm -f "$scan_result" "$scan_ready"
         return
     fi
-    snapshot=$(tmux list-panes -a -F 'P|#{pane_id}=#{@ai_attention_state}|#{pane_current_command}|#{@ai_agent_command}|' ';' \
+    snapshot=$(tmux display-message -p 'T%s' ';' \
+        list-panes -a -F 'P|#{pane_id}=#{@ai_attention_state}|#{pane_current_command}|#{@ai_agent_command}|' ';' \
         list-windows -a -F 'W#{window_id}' ';' \
         list-sessions -F 'S#{session_id}' ';' \
         list-clients -F 'C#{client_name}|#{window_id}|#{client_flags}|#{pane_in_mode}' 2>/dev/null) || return
     pane_states="" windows="" sessions="" client_rows=""
     while IFS= read -r line; do
         case $line in
+        T*) now=${line#T} ;;
         P*) pane_states="$pane_states${line#P}" ;;
         W*)
             # Linked windows appear once per containing session.
@@ -281,6 +283,18 @@ $pane $busy $memo"
             [ "$previous" = done ] || completed=1
             ;;
         esac
+        age_command=""
+        if [ "$completed" = 1 ] && [ "$command" = "$current_command" ]; then
+            case $command in
+            *[!a-zA-Z0-9._-]*) ;;
+            *) age_command="set-option -p -t $pane @ai_attention_age '$state:$now:$command' ; " ;;
+            esac
+        else
+            case $busy:$previous in
+            1:working | 1:quiet1 | 1:quiet2) ;;
+            1:*) age_command="set-option -pu -t $pane @ai_attention_age ; " ;;
+            esac
+        fi
         case " $viewed " in *" $win "*)
             case $state in
             done) state="" ;;
@@ -303,7 +317,7 @@ $pane $busy $memo"
                 membership="#{&&:$membership,#{==:#{pane_current_command},$agent_command}}"
             fi
             applied=$(tmux if-shell -F -t "$pane" "$membership" \
-                "set-option -p -t $pane @ai_attention_state '$state' ; ${identity_command}${event_command}display-message -p applied" \
+                "set-option -p -t $pane @ai_attention_state '$state' ; ${identity_command}${event_command}${age_command}display-message -p applied" \
                 'display-message -p moved' 2>/dev/null) || continue
             [ "$applied" = applied ] || continue
             [ "$completed" = 0 ] || notify=1

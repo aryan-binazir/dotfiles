@@ -6,17 +6,19 @@ import fcntl
 import os
 from pathlib import Path
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 
 FIELDS = ('pane_id', 'session_id', 'window_id', 'window_index', 'pane_index',
           'session_name', 'window_name', 'pane_current_command',
           '@ai_attention_state', 'TMUX_AI_SPINNER_FRAME', '@ai_agent_command',
-          'pane_title', 'pane_current_path')
+          'pane_title', 'pane_current_path', '@ai_attention_age', 'pane_height')
 TITLE_LIMIT = 256
 
 
@@ -53,11 +55,68 @@ def client_session(socket, client):
     raise ValueError('Client detached')
 
 
+def visible_output(socket, rows):
+    marker = 'picker-' + secrets.token_hex(16)
+    commands = []
+    for pane in rows:
+        if not re.fullmatch(r'%[0-9]+', pane['pane_id']) or not re.fullmatch(r'[A-Za-z0-9._-]+', pane['pane_current_command']):
+            continue
+        height = int(pane['pane_height']) if pane['pane_height'].isdigit() else 24
+        commands.extend(['display-message', '-p', '-t', pane['pane_id'],
+                         marker + pane['pane_id'].replace('%', '%%') + ':#{pane_current_command}', ';',
+                         'capture-pane', '-p', '-J', '-t', pane['pane_id'],
+                         '-S', str(max(0, height - 80)), '-E', str(max(0, height - 1)), ';'])
+    if not commands:
+        return {}
+    commands.extend(['display-message', '-p', marker + 'end'])
+    try:
+        captured = subprocess.run(['tmux', '-S', socket, *commands], text=True, errors='replace',
+                                  capture_output=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    screens = {}
+    current = None
+    expected = {pane['pane_id'] + ':' + pane['pane_current_command']: pane['pane_id'] for pane in rows}
+    for line in captured.splitlines():
+        if line.startswith(marker):
+            current = expected.get(line[len(marker):])
+            if current:
+                screens[current] = []
+        elif current:
+            screens[current].append(''.join(c if c.isprintable() else ' ' for c in line).strip())
+    snippets = {}
+    for pane in rows:
+        lines = screens.get(pane['pane_id'], [])
+        prompts = [i for i, line in enumerate(lines) if re.match(r'^[❯›>]($|\s)', line)]
+        rules = [i for i, line in enumerate(lines) if re.match(r'^[─━]{3,}', line)]
+        if pane['pane_current_command'] == 'pi' and len(rules) >= 2:
+            end = rules[-2]
+        elif prompts:
+            end = prompts[-1]
+        elif pane['@ai_attention_state'].startswith('blocked'):
+            end = next((i for i, line in enumerate(lines) if re.match(
+                r'(?i)^(↑↓ navigate|enter (submit|to)|esc cancel|press enter to)', line)), 0)
+        else:
+            continue
+        for line in reversed(lines[:end]):
+            if not line or re.match(r'^[─━╭╮╰╯┌┐└┘│┃↑↓→❯›]', line):
+                continue
+            if re.match(r'(?i)^([123][.]\s+(yes|no)\b|[\u2800-\u28ff·✢✳✶✻✽*]\s+\w+([….]|$)|'
+                        r'esc(ape)? to |ctrl\+c to |\? for shortcuts|[0-9]+% context left)', line):
+                continue
+            text = re.sub(r'^[⏺•]\s*', '', line)
+            text = ' '.join(text.split())
+            snippets[pane['pane_id']] = text[:99] + '…' if len(text) > 100 else text
+            break
+    return snippets
+
+
 def listing(socket, client=None):
     current = client_session(socket, client) if client else ''
     snapshot = sorted(panes(socket), key=lambda p: (p['session_id'] != current, int(p['session_id'][1:])))
     rows = []
     seen = set()
+    now = int(time.time())
     for pane in snapshot:
         if pane['pane_id'] in seen:
             continue
@@ -85,17 +144,26 @@ def listing(socket, client=None):
             if (folder and len(title) < TITLE_LIMIT and title.startswith(prefix)
                     and title != prefix + folder and title.endswith(suffix)):
                 window_name = title[len(prefix):-len(suffix)].strip() or window_name
+        age = ''
+        stamp = re.fullmatch(r'(done|blocked):([0-9]{1,12}):(.+)', pane['@ai_attention_age'])
+        if stamp and stamp[3] == command and 0 < int(stamp[2]) <= now:
+            elapsed = now - int(stamp[2])
+            duration = ('<1m' if elapsed < 60 else f'{elapsed // 60}m' if elapsed < 3600
+                        else f'{elapsed // 3600}h' if elapsed < 86400 else f'{elapsed // 86400}d')
+            age = f'finished {duration} ago' if stamp[1] == 'done' else f'waiting {duration}'
         columns = (pane['session_name'],
-                   f"{pane['window_index']}:{window_name}", agent, label)
+                   f"{pane['window_index']}:{window_name}", agent, label, age)
         rows.append((priority, pane, columns))
     rows.sort(key=lambda row: (row[0], row[1]['session_name'], int(row[1]['window_index']), int(row[1]['pane_index'])))
-    header = ('SESSION', 'WINDOW', 'AGENT', 'STATUS')
-    widths = [max(len(columns[i]) for columns in [header] + [row[2] for row in rows]) for i in range(4)]
-    def render(columns):
-        return '    '.join(value.center(width) if i == 3 else value.ljust(width)
-                           for i, (value, width) in enumerate(zip(columns, widths))).rstrip()
-    lines = ['\t\t#\t' + render(header)]
-    lines.extend(f"{pane['pane_id']}\t{pane['session_id']}\t{i if i < 10 else ' '}\t{render(columns)}"
+    snippets = visible_output(socket, [row[1] for row in rows])
+    header = ('SESSION', 'WINDOW', 'AGENT', 'STATUS', 'AGE')
+    widths = [max(len(columns[i]) for columns in [header] + [row[2] for row in rows]) for i in range(5)]
+    def render(columns, output=''):
+        metadata = '    '.join(value.center(width) if i == 3 else value.ljust(width)
+                               for i, (value, width) in enumerate(zip(columns, widths)))
+        return metadata + '    \t' + output if output else metadata.rstrip()
+    lines = ['\t\t#\t' + render(header, 'OUTPUT')]
+    lines.extend(f"{pane['pane_id']}\t{pane['session_id']}\t{i if i < 10 else ' '}\t{render(columns, snippets.get(pane['pane_id'], ''))}"
                  for i, (_, pane, columns) in enumerate(rows))
     return '\n'.join(lines) + '\n'
 
@@ -160,7 +228,7 @@ def pick(socket, client):
         select_row = rf'pos({i + 1})+transform:case \{{3}} in {i}) printf accept;; esac'
         action = f'if [ "$FZF_MATCH_COUNT" -gt {i} ]; then printf %s {shlex.quote(select_row)}; fi'
         number_bindings.extend(['--bind', f'{i}:transform:{action}'])
-    result = subprocess.run(['fzf', '--delimiter=\t', '--with-nth=3..', '--nth=2..', '--tabstop=3', '--header-lines=1',
+    result = subprocess.run(['fzf', '--delimiter=\t', '--with-nth=3..', '--nth=2', '--tabstop=3', '--header-lines=1',
                              '--with-shell=sh -c', '--layout=reverse', '--info=inline', '--no-multi', '--tiebreak=index',
                              '--no-input', '--prompt=Search agents > ', '--track', '--id-nth=1',
                              f'--bind=load:pos({initial_position})+unbind(load)',
