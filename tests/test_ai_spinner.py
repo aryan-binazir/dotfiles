@@ -208,6 +208,8 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         time.sleep(0.5)
         self.assertEqual(self.notification_records(), [])
         self.assertEqual(self.icon(), "")
+        self.assertRegex(self.tmux("show-options", "-pqv", "-t", self.pane, "@ai_attention_age").strip(),
+                         r"^done:[0-9]+:sleep$")
 
     def test_disabled_or_failed_desktop_notifications_do_not_stop_attention(self):
         env = self.notification_tools()
@@ -743,6 +745,64 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         time.sleep(2.5)
         self.assertEqual(self.icon(), "✓")
         self.assertEqual(self.sound_count(), 1)
+
+    def test_finished_age_survives_acknowledgement_and_restart_until_new_work(self):
+        pane, _ = self.agent_screen("claude", "Checked the files.", title="⠋ Claude")
+        old = self.start_daemon()
+        self.until(lambda: bool(self.icon(target=pane)), "working")
+        self.stopped(pane)
+        stamp = lambda: self.tmux("show-options", "-pqv", "-t", pane, "@ai_attention_age").strip()
+        self.until(lambda: stamp().startswith("done:"), "completion age recorded")
+        completed = stamp()
+        self.assertRegex(completed, r"^done:[0-9]+:claude$")
+        self.tmux("select-window", "-t", pane)
+        self.attach()
+        self.until(lambda: self.icon(target=pane) == "", "completion acknowledged")
+        self.assertEqual(stamp(), completed)
+        self.start_daemon()
+        self.until(lambda: old.poll() is not None, "monitor replaced")
+        time.sleep(1.2)
+        self.assertEqual(stamp(), completed)
+        self.working(pane)
+        self.until(lambda: stamp() == "" and bool(self.icon(target=pane)), "new work clears age")
+
+    def test_waiting_age_survives_viewing_and_a_brief_prompt_redraw(self):
+        prompt = "Approve command?\n→ Yes\n↑↓ navigate  enter select  escape cancel"
+        pane, screen = self.agent_screen("pi", prompt)
+        self.start_daemon()
+        stamp = lambda: self.tmux("show-options", "-pqv", "-t", pane, "@ai_attention_age").strip()
+        self.until(lambda: stamp().startswith("blocked:"), "waiting age recorded")
+        waiting = stamp()
+        self.tmux("select-window", "-t", pane)
+        self.attach()
+        self.until(lambda: self.tmux("show-options", "-pqv", "-t", pane,
+                                    "@ai_attention_state").strip() == "blocked-seen", "prompt viewed")
+        self.assertEqual(stamp(), waiting)
+        self.redraw_agent(pane, screen, "Redrawing")
+        self.until(lambda: self.tmux("show-options", "-pqv", "-t", pane,
+                                    "@ai_attention_state").strip() == "blocked-seen-quiet1", "brief redraw")
+        self.redraw_agent(pane, screen, prompt)
+        self.until(lambda: self.tmux("show-options", "-pqv", "-t", pane,
+                                    "@ai_attention_state").strip() == "blocked-seen", "prompt restored")
+        self.assertEqual(stamp(), waiting)
+
+    def test_shell_interlude_clears_old_age_before_same_agent_relaunch(self):
+        pane, screen = self.agent_screen("claude", "Synthetic result.\n❯", title="⠋ Claude")
+        self.start_daemon()
+        self.until(lambda: bool(self.icon(target=pane)), "working")
+        self.stopped(pane)
+        stamp = lambda: self.tmux("show-options", "-pqv", "-t", pane, "@ai_attention_age").strip()
+        self.until(lambda: stamp().startswith("done:"), "completed")
+        self.tmux("respawn-pane", "-k", "-t", pane, "sleep 300")
+        self.until(lambda: stamp() == "", "non-agent command clears old age")
+        body = "printf '%s\\n' 'New idle agent.' '❯'; while IFS= read -r line; do :; done"
+        self.tmux("respawn-pane", "-k", "-t", pane,
+                  shlex.join([str(screen.parent / "claude"), "-c", body]))
+        self.until(lambda: self.tmux("display-message", "-p", "-t", pane,
+                                    "#{pane_current_command}").strip() == "claude", "same agent relaunched")
+        output = subprocess.check_output([sys.executable, str(ROOT / "stow/scripts/tmux-agent-picker"),
+                                          "list", "--socket", self.socket], text=True)
+        self.assertNotIn("finished ", output)
 
     def attach(self, session="test"):
         master, slave = pty.openpty()

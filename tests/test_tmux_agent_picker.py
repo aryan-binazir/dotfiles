@@ -86,10 +86,10 @@ class PickerTest(unittest.TestCase):
                 except OSError:
                     break
 
-    def attach(self, session='home'):
+    def attach(self, session='home', columns=120):
         before = self.tmux('list-clients', '-F', '#{client_name}').splitlines()
         fd, slave = pty.openpty()
-        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 35, 120, 0, 0))
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 35, columns, 0, 0))
         process = subprocess.Popen(['tmux', '-S', self.socket, 'attach', '-t', session],
                                    env=self.env, stdin=slave, stdout=slave, stderr=slave)
         os.close(slave)
@@ -283,6 +283,224 @@ class PickerTest(unittest.TestCase):
         self.tmux('set-option', '-p', '-t', pane, '@ai_attention_state', '')
         self.assertTrue(self.listing().splitlines()[1].endswith('Claude'))
 
+    def test_age_shows_finished_and_waiting_time_without_inventing_history(self):
+        pane = self.agent('claude', state='done')
+        now = int(time.time())
+        cases = [('done:' + str(now - 300) + ':claude', 'finished 5m ago'),
+                 ('blocked:' + str(now - 120) + ':claude', 'waiting 2m'),
+                 ('done:' + str(now) + ':claude', 'finished <1m ago'),
+                 ('done:' + str(now - 7200) + ':claude', 'finished 2h ago'),
+                 ('done:' + str(now - 172800) + ':claude', 'finished 2d ago')]
+        for stamp, expected in cases:
+            with self.subTest(stamp=stamp):
+                self.tmux('set-option', '-p', '-t', pane, '@ai_attention_age', stamp)
+                self.assertIn(expected, self.listing())
+        for stamp in ('', 'broken', 'done:NaN:claude',
+                      'done:' + str(now + 60) + ':claude',
+                      'done:' + str(now - 300) + ':codex'):
+            with self.subTest(stamp=stamp):
+                self.tmux('set-option', '-p', '-t', pane, '@ai_attention_age', stamp)
+                output = self.listing()
+                self.assertNotIn('finished ', output)
+                self.assertNotIn('waiting ', output)
+
+    def test_visible_output_excludes_drafts_and_footer_controls(self):
+        cases = [('claude', "⏺ Checked the files.\n⎿ Tip: Use /memory to edit\n✻ Worked for 1m 3s\n──────────\n❯ private draft\n──────────\n? for shortcuts"),
+                 ('codex', "• Checked the files.\n• Working (12s • esc to interrupt)\n◦ Working (12s • Esc to interrupt)\n› private draft\n100% context left"),
+                 ('pi', "Checked the files.\n⠴ Working\n──────────\nprivate draft\n> another private draft line\n────────── INSERT\n/home/private\n↑12 ↓34 model"),
+                 ('cursor-agent', "Checked the files.\n> private draft\nCtrl+C to stop")]
+        for command, screen in cases:
+            with self.subTest(command=command):
+                pane = self.agent(command, window='output-' + command)
+                body = "printf '%s\\n' " + shlex.quote(screen) + "; while IFS= read -r line; do :; done"
+                self.tmux('respawn-pane', '-k', '-t', pane,
+                          shlex.join([str(self.directory / command), '-c', body]))
+                self.until(lambda: 'Checked the files.' in self.tmux('capture-pane', '-p', '-t', pane))
+                row = next(row for row in self.listing().splitlines() if row.startswith(pane + '\t'))
+                self.assertIn('Checked the files.', row)
+                self.assertNotIn('private', row)
+                self.assertNotIn('shortcuts', row)
+                self.assertNotIn('context left', row)
+                self.assertNotIn('Ctrl+C', row)
+
+    def test_output_is_bounded_and_ambiguous_composers_leave_it_blank(self):
+        pane = self.agent('claude', window='snippet')
+        text = "Tool output " + "x" * 140 + "\n❯"
+        body = "printf '%s\\n' " + shlex.quote(text) + "; while IFS= read -r line; do :; done"
+        self.tmux('respawn-pane', '-k', '-t', pane,
+                  shlex.join([str(self.directory / 'claude'), '-c', body]))
+        self.until(lambda: 'Tool output' in self.tmux('capture-pane', '-p', '-t', pane))
+        row = self.listing().splitlines()[1]
+        self.assertEqual(row.split('\t')[-1], 'Tool output ' + 'x' * 87 + '…')
+        body = "printf '%s\\n' 'Unrecognized input layout' 'private draft'; while IFS= read -r line; do :; done"
+        self.tmux('respawn-pane', '-k', '-t', pane,
+                  shlex.join([str(self.directory / 'claude'), '-c', body]))
+        self.until(lambda: 'private draft' in self.tmux('capture-pane', '-p', '-t', pane))
+        self.assertNotIn('private draft', self.listing())
+
+    def test_multiline_draft_quotes_never_become_output(self):
+        cases = [('claude', '❯'), ('codex', '›'), ('cursor-agent', '>')]
+        for command, prompt in cases:
+            with self.subTest(command=command):
+                pane = self.agent(command)
+                screen = 'Checked the files.\n' + prompt + ' private draft\nprivate continuation\n> private quote'
+                body = "printf '%s\\n' " + shlex.quote(screen) + "; while IFS= read -r line; do :; done"
+                self.tmux('respawn-pane', '-k', '-t', pane,
+                          shlex.join([str(self.directory / command), '-c', body]))
+                self.until(lambda: 'private quote' in self.tmux('capture-pane', '-p', '-t', pane))
+                row = next(row for row in self.listing().splitlines() if row.startswith(pane + '\t'))
+                self.assertNotIn('private', row)
+                if command != 'cursor-agent':
+                    self.assertIn('Checked the files.', row)
+
+    def test_pi_composer_is_protected_under_supported_runtimes_and_pasted_rules(self):
+        for command in ('pi', 'node', 'bun', 'uv'):
+            for pasted in (False, True):
+                with self.subTest(command=command, pasted=pasted):
+                    pane = self.agent(command, state='blocked')
+                    screen = ('Checked the files.\n──────────\nprivate draft\n'
+                              + ('──────────\nprivate continuation\n' if pasted else '')
+                              + '> private quote\n────────── INSERT\n↑12 ↓34 model')
+                    body = "printf '%s\\n' " + shlex.quote(screen) + "; while IFS= read -r line; do :; done"
+                    self.tmux('respawn-pane', '-k', '-t', pane,
+                              shlex.join([str(self.directory / command), '-c', body]))
+                    self.until(lambda: 'private quote' in self.tmux('capture-pane', '-p', '-t', pane))
+                    row = next(row for row in self.listing().splitlines() if row.startswith(pane + '\t'))
+                    self.assertNotIn('private', row)
+                    if not pasted:
+                        self.assertIn('Checked the files.', row)
+
+    def test_pasted_rules_cannot_override_an_earlier_composer_prompt(self):
+        for command, prompt in (('claude', '❯'), ('codex', '›'), ('cursor-agent', '>')):
+            with self.subTest(command=command):
+                pane = self.agent(command, state='blocked')
+                screen = ('Checked the files.\n' + prompt + ' private draft\nprivate continuation\n'
+                          '──────────\nprivate middle\n──────────\nprivate tail')
+                body = "printf '%s\\n' " + shlex.quote(screen) + "; while IFS= read -r line; do :; done"
+                self.tmux('respawn-pane', '-k', '-t', pane,
+                          shlex.join([str(self.directory / command), '-c', body]))
+                self.until(lambda: 'private tail' in self.tmux('capture-pane', '-p', '-t', pane))
+                row = next(row for row in self.listing().splitlines() if row.startswith(pane + '\t'))
+                self.assertNotIn('private', row)
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_stalled_optional_capture_does_not_delay_popup_opening(self):
+        pane = self.agent('claude', window='capture-stall', state='done')
+        self.tmux('set-option', '-p', '-t', pane, '@ai_attention_age',
+                  'done:' + str(int(time.time()) - 300) + ':claude')
+        tools = self.directory / 'stall-tools'
+        tools.mkdir()
+        wrapper = tools / 'tmux'
+        wrapper.write_text('#!' + sys.executable + '\nimport os, sys, time\n'
+                           'if "capture-pane" in sys.argv: time.sleep(30)\n'
+                           'os.execv(' + repr(shutil.which('tmux')) + ', ["tmux", *sys.argv[1:]])\n')
+        wrapper.chmod(0o755)
+        self.tmux('set-environment', '-g', 'PATH', str(tools) + ':' + self.env['PATH'])
+        self.load_binding()
+        fd, _ = self.attach()
+        started = time.monotonic()
+        self.open_popup(fd)
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertIn(b'finished 5m ago', self.output[fd])
+        os.write(fd, b'\x1b')
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_narrow_popup_keeps_age_and_output_visible(self):
+        pane = self.agent('codex', window='agent', state='done')
+        body = "printf '%s\\n' 'Checked files.' '›'; while IFS= read -r line; do :; done"
+        self.tmux('respawn-pane', '-k', '-t', pane,
+                  shlex.join([str(self.directory / 'codex'), '-c', body]))
+        self.until(lambda: 'Checked files.' in self.tmux('capture-pane', '-p', '-t', pane))
+        self.tmux('set-option', '-p', '-t', pane, '@ai_attention_age',
+                  'done:' + str(int(time.time()) - 300) + ':codex')
+        self.load_binding()
+        fd, _ = self.attach(columns=80)
+        self.open_popup(fd)
+        self.assertIn(b'finished 5m ago', self.output[fd])
+        self.assertIn(b'Checked', self.output[fd])
+        os.write(fd, b'\x1b')
+
+    def test_failed_output_capture_keeps_the_agent_list_and_age_available(self):
+        pane = self.agent('claude', window='capture-failure', state='done')
+        self.tmux('set-option', '-p', '-t', pane, '@ai_attention_age',
+                  'done:' + str(int(time.time()) - 300) + ':claude')
+        tools = self.directory / 'tools'
+        tools.mkdir()
+        wrapper = tools / 'tmux'
+        wrapper.write_text('#!' + sys.executable + '\nimport os, sys\n'
+                           'if "capture-pane" in sys.argv: sys.exit(1)\n'
+                           'os.execv(' + repr(shutil.which('tmux')) + ', ["tmux", *sys.argv[1:]])\n')
+        wrapper.chmod(0o755)
+        self.env['PATH'] = str(tools) + ':' + self.env['PATH']
+        output = self.listing()
+        self.assertIn('capture-failure', output)
+        self.assertIn('finished 5m ago', output)
+
+    def test_closed_pane_during_capture_does_not_hide_other_output(self):
+        closed = self.agent('claude', window='a-closed')
+        target = self.agent('codex', window='b-visible')
+        body = "printf '%s\\n' 'Still visible.' '›'; while IFS= read -r line; do :; done"
+        self.tmux('respawn-pane', '-k', '-t', target,
+                  shlex.join([str(self.directory / 'codex'), '-c', body]))
+        self.until(lambda: 'Still visible.' in self.tmux('capture-pane', '-p', '-t', target))
+        tools = self.directory / 'closing-tools'
+        tools.mkdir()
+        marker = tools / 'closed'
+        real = shutil.which('tmux')
+        wrapper = tools / 'tmux'
+        wrapper.write_text('#!' + sys.executable + '\nimport os, sys, subprocess\nfrom pathlib import Path\n'
+                           'marker = Path(' + repr(str(marker)) + ')\n'
+                           'if "capture-pane" in sys.argv and not marker.exists():\n'
+                           '    subprocess.run(' + repr([real, '-S', self.socket, 'kill-pane', '-t', closed]) + ', check=True)\n'
+                           '    marker.touch()\n'
+                           'os.execv(' + repr(real) + ', ["tmux", *sys.argv[1:]])\n')
+        wrapper.chmod(0o755)
+        self.env['PATH'] = str(tools) + ':' + self.env['PATH']
+        output = self.listing()
+        self.assertIn('b-visible', output)
+        self.assertIn('Still visible.', output)
+
+    def test_blocked_output_uses_the_latest_visible_dialog(self):
+        pane = self.agent('pi', window='dialog', state='blocked')
+        screen = ("Old question?\n→ Yes\n↑↓ navigate enter select escape cancel\n"
+                  "Recent question?\n→ Yes\n↑↓ navigate enter select escape cancel")
+        body = "printf '%s\\n' " + shlex.quote(screen) + "; while IFS= read -r line; do :; done"
+        self.tmux('respawn-pane', '-k', '-t', pane,
+                  shlex.join([str(self.directory / 'pi'), '-c', body]))
+        self.until(lambda: 'Recent question?' in self.tmux('capture-pane', '-p', '-t', pane))
+        self.assertIn('Recent question?', self.listing())
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_output_refresh_preserves_selection_and_search_matches_only_metadata(self):
+        first = self.agent('claude', window='fixture-first')
+        target = self.agent('codex', window='fixture-second')
+        screen = self.directory / 'screen'
+        screen.write_text('only-output-marker\n›\n')
+        body = ("while :; do printf '\\033[2J\\033[H'; cat " + shlex.quote(str(screen))
+                + "; IFS= read -r line || exit; done")
+        self.tmux('respawn-pane', '-k', '-t', target,
+                  shlex.join([str(self.directory / 'codex'), '-c', body]))
+        self.until(lambda: 'only-output-marker' in self.listing())
+        self.tmux('set-option', '-p', '-t', target, '@ai_attention_age',
+                  'done:' + str(int(time.time()) - 120) + ':codex')
+        self.load_binding()
+        fd, client = self.attach()
+        self.tmux('switch-client', '-c', client, '-t', first)
+        self.open_popup(fd)
+        self.keys_and_wait(fd, b'/only-output-marker', '0/2')
+        self.keys_and_wait(fd, b'\x15finished', '1/2')
+        self.keys_and_wait(fd, b'\x15fixture', '2/2')
+        self.output[fd] = b''
+        self.tmux('set-option', '-p', '-t', target, '@ai_attention_state', 'blocked')
+        self.tmux('set-option', '-p', '-t', target, '@ai_attention_age',
+                  'blocked:' + str(int(time.time()) - 300) + ':codex')
+        screen.write_text('Updated synthetic output\n›\n')
+        self.tmux('send-keys', '-t', target, 'Enter')
+        self.until(lambda: b'Updated synthetic output' in self.output[fd])
+        self.assertIn(b'waiting 5m', self.output[fd])
+        os.write(fd, b'\r')
+        self.until(lambda: self.client_state(client).split()[1] == target)
+
     def test_lists_agents_in_column_and_attention_order(self):
         idle = self.agent('2.1.289', window='idle')
         working = self.agent('codex', session='bball', window='score', state='quiet1')
@@ -290,8 +508,7 @@ class PickerTest(unittest.TestCase):
         blocked = self.agent('claude', session='ember', window='proposal', state='blocked-seen')
         rows = [line.split('\t') for line in self.listing().splitlines()]
         self.assertEqual(rows[0][2], '#')
-        self.assertIn('SESSION', rows[0][-1])
-        self.assertRegex(rows[0][-1], r'SESSION\s+WINDOW\s+AGENT\s+STATUS')
+        self.assertRegex(' '.join(rows[0][3:]), r'SESSION\s+WINDOW\s+AGENT\s+STATUS\s+AGE\s+OUTPUT')
         self.assertEqual([row[0] for row in rows[1:]], [blocked, done, working, idle])
         for row, expected in zip(rows[1:], [('ember', 'proposal', 'Claude', '!'),
                                           ('home', 'config', 'Pi', '✓'),
@@ -518,9 +735,7 @@ class PickerTest(unittest.TestCase):
                 pending.touch()
                 self.until(started.exists)
                 if keys.startswith(b'/'):
-                    os.write(fd, keys[:-1])
-                    self.until(lambda: '1/3' in re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '',
-                                                      self.output[fd].decode(errors='replace')), timeout=1)
+                    self.keys_and_wait(fd, keys[:-1], 'second')
                     os.write(fd, keys[-1:])
                 else:
                     os.write(fd, keys)

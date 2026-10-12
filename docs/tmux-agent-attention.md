@@ -38,7 +38,7 @@ stops. The internal frame is not exported to new pane processes.
 
 `prefix b` opens a centered, searchable list of AI panes across the current tmux
 server. The columns are **Session**, **Window** (number and name), **Agent**,
-and **Status**, with a **#** column labeling number shortcuts. Help stays at the
+**Status**, **Age**, and **Output**, with a **#** column labeling number shortcuts. Help stays at the
 bottom, leaving the column headers above the list.
 It reads the initial agent list and statuses before opening the popup, using the
 same pane metadata as subsequent refreshes.
@@ -53,7 +53,9 @@ provider calls, transcript reads, cache, or separate timer. Name metadata shares
 the existing five-second tmux query timeout; without a pane snapshot, the picker
 reports its usual error. Search matches the displayed name.
 
-![Agent picker](images/tmux-agent-picker-symbols.png)
+![Agent picker with age and output](images/tmux-agent-picker-age-output.png)
+
+The example uses synthetic conversations and output captured from the real popup.
 
 It opens in navigation mode with your current agent pane highlighted. If your
 current pane is not listed, it starts on the first row.
@@ -64,8 +66,8 @@ current pane is not listed, it starts on the first row.
   leave the highlighted row unchanged.
 - Enter opens the highlighted pane. Escape closes the popup without navigating.
 - `/` enters search mode. Type to filter any column; letters and numbers are
-  ordinary query text here. Search matches the four data columns, excluding the
-  shortcut labels. Enter opens the match. Escape clears the search and
+  ordinary query text here. Search matches the five metadata columns, excluding the
+  shortcut labels and Output. Enter opens the match. Escape clears the search and
   returns to navigation; another Escape closes the popup.
 
 `prefix w` and `prefix W` keep their native tree behavior.
@@ -98,6 +100,28 @@ This uses the existing scan and adds no polling. Recognition remains heuristic;
 a state is not proof of an AI process.
 Pane titles alone do not establish agent identity. Long names can extend beyond
 the popup width; wide Unicode characters can misalign the columns.
+
+**Age** shows `waiting <1m`, `waiting 5m`, or `finished 5m ago`, using minutes,
+hours, or days. It starts when the monitor observes a new input prompt or a
+stopped turn. Reading output and restarting the monitor preserve the timestamp;
+new work clears it. Already-idle agents with no observed completion have no age.
+Completion timing includes the quiet-observation debounce. "Finished" means
+the turn looks stopped, including errors or interruption, rather than task success.
+The timestamp is cleared when the monitor observes a different foreground
+command, and ignored by the picker if its recorded command does not match.
+
+**Output** is a best-effort snippet of the latest visible output, including
+tool output. The picker captures up to 80 visible rows per listed pane in one
+additional batched tmux request, only when the picker lists or refreshes agents.
+It keeps at most 100 printable characters on one line. Recognizable composers,
+drafts, spinner lines, and footer controls are excluded. Ambiguous or unknown input layouts
+leave Output blank; the snippet is not guaranteed to be an assistant message.
+Missing or timed-out captures leave the metadata and navigation available.
+Each optional capture or retry query has a 200 ms timeout. Column spacing
+compresses when the client's popup width cannot fit the usual padding.
+Output is not stored in pane options and does not change attention detection.
+
+![Filtering by completion age](images/tmux-agent-picker-age-search.png)
 
 Linked panes appear once, preferring their name in your current session. Enter
 rechecks pane identity, follows moved panes, preserves zoom, and reports a closed
