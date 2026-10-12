@@ -191,7 +191,7 @@ apply_scan() {
         return
     fi
     snapshot=$(tmux display-message -p 'T%s' ';' \
-        list-panes -a -F 'P|#{pane_id}=#{@ai_attention_state}|#{pane_current_command}|#{@ai_agent_command}|' ';' \
+        list-panes -a -F 'P|#{pane_id}=#{@ai_attention_state}|#{pane_current_command}|#{@ai_agent_command}|#{@ai_attention_age}|' ';' \
         list-windows -a -F 'W#{window_id}' ';' \
         list-sessions -F 'S#{session_id}' ';' \
         list-clients -F 'C#{client_name}|#{window_id}|#{client_flags}|#{pane_in_mode}' 2>/dev/null) || return
@@ -249,6 +249,8 @@ $pane $busy $memo"
         current_command=${metadata%%|*}
         metadata=${metadata#*|}
         registered_agent=${metadata%%|*}
+        metadata=${metadata#*|}
+        age=${metadata%%|*}
         agent_command=""
         case $current_command in
         node | bun | uv)
@@ -284,15 +286,19 @@ $pane $busy $memo"
             ;;
         esac
         age_command=""
+        case $age in
+        '' | *":$current_command") ;;
+        *) age=""; age_command="set-option -pu -t $pane @ai_attention_age ; " ;;
+        esac
         if [ "$completed" = 1 ] && [ "$command" = "$current_command" ]; then
             case $command in
             *[!a-zA-Z0-9._-]*) ;;
-            *) age_command="set-option -p -t $pane @ai_attention_age '$state:$now:$command' ; " ;;
+            *) age="$state:$now:$command"; age_command="set-option -p -t $pane @ai_attention_age '$age' ; " ;;
             esac
         else
             case $busy:$previous in
             1:working | 1:quiet1 | 1:quiet2) ;;
-            1:*) age_command="set-option -pu -t $pane @ai_attention_age ; " ;;
+            1:*) age=""; age_command="set-option -pu -t $pane @ai_attention_age ; " ;;
             esac
         fi
         case " $viewed " in *" $win "*)
@@ -301,7 +307,7 @@ $pane $busy $memo"
             blocked | blocked-quiet1 | blocked-quiet2) state=blocked-seen${state#blocked} ;;
             esac ;;
         esac
-        if [ "$state" != "$previous" ] || [ "$agent_command" != "$registered_agent" ]; then
+        if [ "$state" != "$previous" ] || [ "$agent_command" != "$registered_agent" ] || [ -n "$age_command" ]; then
             # A pane can move after the async sample. Check membership and
             # persist together in tmux, never acknowledging its old window.
             event_command=""
@@ -325,7 +331,7 @@ $pane $busy $memo"
             1:done | 1:blocked) notify_panes="$notify_panes $pane" ;;
             esac
         fi
-        processed_states="$processed_states|$pane=$state|$current_command|$agent_command|"
+        processed_states="$processed_states|$pane=$state|$current_command|$agent_command|$age|"
         case $state in
         working | quiet1 | quiet2)
             case " $working " in *" $win "*) ;; *) working="$working $win" ;; esac

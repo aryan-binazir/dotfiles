@@ -55,29 +55,37 @@ def client_session(socket, client):
     raise ValueError('Client detached')
 
 
-def visible_output(socket, rows):
+def visible_output(socket, rows, retry=True):
     marker = 'picker-' + secrets.token_hex(16)
     commands = []
     for pane in rows:
         if not re.fullmatch(r'%[0-9]+', pane['pane_id']) or not re.fullmatch(r'[A-Za-z0-9._-]+', pane['pane_current_command']):
             continue
-        height = int(pane['pane_height']) if pane['pane_height'].isdigit() else 24
+        height = int(pane['pane_height'])
         commands.extend(['display-message', '-p', '-t', pane['pane_id'],
                          marker + pane['pane_id'].replace('%', '%%') + ':#{pane_current_command}', ';',
                          'capture-pane', '-p', '-J', '-t', pane['pane_id'],
                          '-S', str(max(0, height - 80)), '-E', str(max(0, height - 1)), ';'])
     if not commands:
         return {}
-    commands.extend(['display-message', '-p', marker + 'end'])
+    commands.pop()
     try:
-        captured = subprocess.run(['tmux', '-S', socket, *commands], text=True, errors='replace',
-                                  capture_output=True, timeout=5).stdout
+        result = subprocess.run(['tmux', '-S', socket, *commands], text=True, errors='replace',
+                                capture_output=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
         return {}
+    if result.returncode and retry:
+        try:
+            live = {pane['pane_id'] for pane in panes(socket)}
+        except (OSError, subprocess.SubprocessError):
+            live = {pane['pane_id'] for pane in rows}
+        remaining = [pane for pane in rows if pane['pane_id'] in live]
+        if len(remaining) < len(rows):
+            return visible_output(socket, remaining, retry=False)
     screens = {}
     current = None
     expected = {pane['pane_id'] + ':' + pane['pane_current_command']: pane['pane_id'] for pane in rows}
-    for line in captured.splitlines():
+    for line in result.stdout.splitlines():
         if line.startswith(marker):
             current = expected.get(line[len(marker):])
             if current:
@@ -94,15 +102,19 @@ def visible_output(socket, rows):
         elif prompts:
             end = prompts[-1]
         elif pane['@ai_attention_state'].startswith('blocked'):
-            end = next((i for i, line in enumerate(lines) if re.match(
-                r'(?i)^(↑↓ navigate|enter (submit|to)|esc cancel|press enter to)', line)), 0)
+            hints = [i for i, line in enumerate(lines) if re.match(
+                r'(?i)^(↑↓ navigate|enter (submit|to)|esc cancel|press enter to)', line)]
+            end = hints[-1] if hints else 0
         else:
             continue
         for line in reversed(lines[:end]):
             if not line or re.match(r'^[─━╭╮╰╯┌┐└┘│┃↑↓→❯›]', line):
                 continue
             if re.match(r'(?i)^([123][.]\s+(yes|no)\b|[\u2800-\u28ff·✢✳✶✻✽*]\s+\w+([….]|$)|'
+                        r'[•◦]\s*Working\b|⎿\s+Tip:|[·✢✳✶✻✽*]\s+\w+ for [0-9]|'
                         r'esc(ape)? to |ctrl\+c to |\? for shortcuts|[0-9]+% context left)', line):
+                continue
+            if re.search(r'(?i)(esc|ctrl\+c) to (interrupt|stop)', line):
                 continue
             text = re.sub(r'^[⏺•]\s*', '', line)
             text = ' '.join(text.split())

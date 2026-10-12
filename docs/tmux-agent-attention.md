@@ -67,7 +67,7 @@ current pane is not listed, it starts on the first row.
 - Enter opens the highlighted pane. Escape closes the popup without navigating.
 - `/` enters search mode. Type to filter any column; letters and numbers are
   ordinary query text here. Search matches the five metadata columns, excluding the
-  shortcut labels. Enter opens the match. Escape clears the search and
+  shortcut labels and Output. Enter opens the match. Escape clears the search and
   returns to navigation; another Escape closes the popup.
 
 `prefix w` and `prefix W` keep their native tree behavior.
@@ -98,14 +98,17 @@ the command clears that identity. Unrecognized runtime processes stay excluded;
 already-idle processes need recognizable activity once to establish identity.
 This uses the existing scan and adds no polling. Recognition remains heuristic;
 a state is not proof of an AI process.
+Pane titles alone do not establish agent identity. Long names can extend beyond
+the popup width; wide Unicode characters can misalign the columns.
+
 **Age** shows `waiting <1m`, `waiting 5m`, or `finished 5m ago`, using minutes,
 hours, or days. It starts when the monitor observes a new input prompt or a
 stopped turn. Reading output and restarting the monitor preserve the timestamp;
 new work clears it. Already-idle agents with no observed completion have no age.
 Completion timing includes the quiet-observation debounce. "Finished" means
 the turn looks stopped, including errors or interruption, rather than task success.
-The timestamp is ignored when its recorded command differs from the pane's
-current command.
+The timestamp is cleared when the monitor observes a different foreground
+command, and ignored by the picker if its recorded command does not match.
 
 **Output** is a best-effort snippet of the latest visible output, including
 tool output. The picker captures up to 80 visible rows per listed pane in one
@@ -116,11 +119,7 @@ leave Output blank; the snippet is not guaranteed to be an assistant message.
 Missing or timed-out captures leave the metadata and navigation available.
 Output is not stored in pane options and does not change attention detection.
 
-Search matches Session, Window, Agent, Status, and Age. Output stays outside
-search so tool text does not overwhelm session and window matches.
-
-Pane titles alone do not establish agent identity. Long names can extend beyond
-the popup width; wide Unicode characters can misalign the columns.
+![Filtering by completion age](images/tmux-agent-picker-age-search.png)
 
 Linked panes appear once, preferring their name in your current session. Enter
 rechecks pane identity, follows moved panes, preserves zoom, and reports a closed

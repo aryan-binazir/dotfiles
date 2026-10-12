@@ -786,6 +786,24 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
                                     "@ai_attention_state").strip() == "blocked-seen", "prompt restored")
         self.assertEqual(stamp(), waiting)
 
+    def test_shell_interlude_clears_old_age_before_same_agent_relaunch(self):
+        pane, screen = self.agent_screen("claude", "Synthetic result.\n❯", title="⠋ Claude")
+        self.start_daemon()
+        self.until(lambda: bool(self.icon(target=pane)), "working")
+        self.stopped(pane)
+        stamp = lambda: self.tmux("show-options", "-pqv", "-t", pane, "@ai_attention_age").strip()
+        self.until(lambda: stamp().startswith("done:"), "completed")
+        self.tmux("respawn-pane", "-k", "-t", pane, "sleep 300")
+        self.until(lambda: stamp() == "", "non-agent command clears old age")
+        body = "printf '%s\\n' 'New idle agent.' '❯'; while IFS= read -r line; do :; done"
+        self.tmux("respawn-pane", "-k", "-t", pane,
+                  shlex.join([str(screen.parent / "claude"), "-c", body]))
+        self.until(lambda: self.tmux("display-message", "-p", "-t", pane,
+                                    "#{pane_current_command}").strip() == "claude", "same agent relaunched")
+        output = subprocess.check_output([sys.executable, str(ROOT / "stow/scripts/tmux-agent-picker"),
+                                          "list", "--socket", self.socket], text=True)
+        self.assertNotIn("finished ", output)
+
     def attach(self, session="test"):
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))

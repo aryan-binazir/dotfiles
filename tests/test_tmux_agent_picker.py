@@ -305,8 +305,8 @@ class PickerTest(unittest.TestCase):
                 self.assertNotIn('waiting ', output)
 
     def test_visible_output_excludes_drafts_and_footer_controls(self):
-        cases = [('claude', "⏺ Checked the files.\n──────────\n❯ private draft\n──────────\n? for shortcuts"),
-                 ('codex', "• Checked the files.\n› private draft\n100% context left"),
+        cases = [('claude', "⏺ Checked the files.\n⎿ Tip: Use /memory to edit\n✻ Worked for 1m 3s\n──────────\n❯ private draft\n──────────\n? for shortcuts"),
+                 ('codex', "• Checked the files.\n• Working (12s • esc to interrupt)\n◦ Working (12s • Esc to interrupt)\n› private draft\n100% context left"),
                  ('pi', "Checked the files.\n⠴ Working\n──────────\nprivate draft\n> another private draft line\n────────── INSERT\n/home/private\n↑12 ↓34 model"),
                  ('cursor-agent', "Checked the files.\n> private draft\nCtrl+C to stop")]
         for command, screen in cases:
@@ -353,6 +353,40 @@ class PickerTest(unittest.TestCase):
         output = self.listing()
         self.assertIn('capture-failure', output)
         self.assertIn('finished 5m ago', output)
+
+    def test_closed_pane_during_capture_does_not_hide_other_output(self):
+        closed = self.agent('claude', window='a-closed')
+        target = self.agent('codex', window='b-visible')
+        body = "printf '%s\\n' 'Still visible.' '›'; while IFS= read -r line; do :; done"
+        self.tmux('respawn-pane', '-k', '-t', target,
+                  shlex.join([str(self.directory / 'codex'), '-c', body]))
+        self.until(lambda: 'Still visible.' in self.tmux('capture-pane', '-p', '-t', target))
+        tools = self.directory / 'closing-tools'
+        tools.mkdir()
+        marker = tools / 'closed'
+        real = shutil.which('tmux')
+        wrapper = tools / 'tmux'
+        wrapper.write_text('#!' + sys.executable + '\nimport os, sys, subprocess\nfrom pathlib import Path\n'
+                           'marker = Path(' + repr(str(marker)) + ')\n'
+                           'if "capture-pane" in sys.argv and not marker.exists():\n'
+                           '    subprocess.run(' + repr([real, '-S', self.socket, 'kill-pane', '-t', closed]) + ', check=True)\n'
+                           '    marker.touch()\n'
+                           'os.execv(' + repr(real) + ', ["tmux", *sys.argv[1:]])\n')
+        wrapper.chmod(0o755)
+        self.env['PATH'] = str(tools) + ':' + self.env['PATH']
+        output = self.listing()
+        self.assertIn('b-visible', output)
+        self.assertIn('Still visible.', output)
+
+    def test_blocked_output_uses_the_latest_visible_dialog(self):
+        pane = self.agent('pi', window='dialog', state='blocked')
+        screen = ("Old question?\n→ Yes\n↑↓ navigate enter select escape cancel\n"
+                  "Recent question?\n→ Yes\n↑↓ navigate enter select escape cancel")
+        body = "printf '%s\\n' " + shlex.quote(screen) + "; while IFS= read -r line; do :; done"
+        self.tmux('respawn-pane', '-k', '-t', pane,
+                  shlex.join([str(self.directory / 'pi'), '-c', body]))
+        self.until(lambda: 'Recent question?' in self.tmux('capture-pane', '-p', '-t', pane))
+        self.assertIn('Recent question?', self.listing())
 
     @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
     def test_output_refresh_preserves_selection_and_search_matches_only_metadata(self):
