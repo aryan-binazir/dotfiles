@@ -202,6 +202,29 @@ class PickerTest(unittest.TestCase):
         self.until(lambda: self.client_state(client).split()[1] == panes[24])
 
     @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_focus_option_highlights_the_requested_pane_or_falls_back_to_the_current_one(self):
+        current = self.agent('claude', window='current', state='blocked')
+        requested = self.agent('codex', window='requested', state='done')
+        self.agent('pi', window='other', state='working')
+        fd, client = self.attach()
+        for focus, expected in ((requested, requested), ('%999', current)):
+            with self.subTest(focus=focus):
+                self.tmux('switch-client', '-c', client, '-t', current)
+                self.output[fd] = b''
+                process = subprocess.Popen([sys.executable, str(SCRIPT), 'open', '--socket', self.socket,
+                                            '--client', client, '--focus', focus], env=self.env,
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                try:
+                    self.until(lambda: b'SESSION' in self.output[fd] and b'Enter:' in self.output[fd])
+                    os.write(fd, b'\r')
+                    self.assertEqual(process.wait(timeout=5), 0)
+                    self.until(lambda: self.client_state(client).split()[1] == expected)
+                finally:
+                    if process.poll() is None:
+                        process.terminate()
+                    process.communicate(timeout=5)
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
     def test_initial_selection_is_not_reapplied_after_automatic_refresh(self):
         self.agent('claude', window='first', state='working')
         current = self.agent('codex', window='second', state='working')

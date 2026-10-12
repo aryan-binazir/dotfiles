@@ -33,7 +33,7 @@ Check a package's directory layout and target before running GNU Stow. `stow/scr
 1. Inspect Git status and the relevant source, installed link, and callers. Preserve unrelated local edits.
 2. Edit the repo source while preserving installed symlinks. Keep existing locations unless a move is requested; a move requires updating links and callers on both machines.
 3. For shared code, check shell versions, command availability, and macOS/BSD versus GNU command options. Use OS detection where behavior differs and `$HOME` for home-directory paths.
-4. Keep optional desktop integrations from breaking core tmux or shell behavior. Ghostty is the primary terminal, but other terminals must keep working. Notifications are automatic and informational when exact click targeting is unavailable; no manual binding is required.
+4. Keep optional desktop integrations from breaking core tmux or shell behavior. Ghostty is the primary terminal, but other terminals must keep working. Notifications are automatic; where supported, clicking one opens the agent picker, otherwise it is informational. No manual binding is required.
 5. Add installation wiring for new executable callers. Placing a file in `stow/scripts/` alone does not put it on PATH. Some helpers are intentionally resolved beside their source instead of installed separately.
 6. Ask before changing user-facing behavior or scope, overwriting existing config files, or making a change that is hard to undo. Reload live tmux only when requested, using the existing server and installed config.
 

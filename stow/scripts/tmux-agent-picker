@@ -207,7 +207,7 @@ def poll(socket, client):
             print('reload-sync:cat "$PICKER_STATE"')
 
 
-def open_picker(socket, client):
+def open_picker(socket, client, focus=None):
     if not shutil.which('fzf'):
         message(socket, client, 'Agent picker requires fzf on PATH')
         return
@@ -222,17 +222,19 @@ def open_picker(socket, client):
         state.write_text(listing(socket, client))
         command = shlex.join(['env', 'PICKER_STATE=' + str(state), sys.executable,
                               str(Path(__file__).resolve()), 'pick',
-                              '--socket', socket, '--client', client])
+                              '--socket', socket, '--client', client,
+                              *(['--focus', focus] if focus else [])])
         subprocess.run(['tmux', '-S', socket, 'display-popup', '-c', client,
                         '-E', '-w', '85%', '-h', '65%', '-x', 'C', '-y', 'C',
                         '-T', ' Agents ', command], check=True, capture_output=True)
 
 
-def pick(socket, client):
+def pick(socket, client, focus=None):
     snapshot = Path(os.environ['PICKER_STATE']).read_text()
-    active_pane = tmux(socket, 'display-message', '-p', '-c', client, '#{pane_id}')
-    initial_position = next((i for i, row in enumerate(snapshot.splitlines()[1:], 1)
-                             if row.split('\t', 1)[0] == active_pane), 1)
+    listed = [row.split('\t', 1)[0] for row in snapshot.splitlines()[1:]]
+    if focus not in listed:
+        focus = tmux(socket, 'display-message', '-p', '-c', client, '#{pane_id}')
+    initial_position = listed.index(focus) + 1 if focus in listed else 1
     env = {**os.environ, 'FZF_DEFAULT_OPTS': '', 'FZF_DEFAULT_OPTS_FILE': '',
            'PICKER_PY': sys.executable, 'PICKER_SELF': str(Path(__file__).resolve()),
            'PICKER_SOCKET': socket, 'PICKER_CLIENT': client}
@@ -282,6 +284,7 @@ def main():
     parser.add_argument('command', choices=['list', 'open', 'pick', 'poll'])
     parser.add_argument('--socket', default=os.environ.get('PICKER_SOCKET'))
     parser.add_argument('--client', default=os.environ.get('PICKER_CLIENT'))
+    parser.add_argument('--focus')
     args = parser.parse_args()
     if not args.socket:
         parser.error('--socket is required')
@@ -291,11 +294,11 @@ def main():
         if args.command == 'list':
             print(listing(args.socket, args.client), end='')
         elif args.command == 'open':
-            open_picker(args.socket, args.client)
+            open_picker(args.socket, args.client, args.focus)
         elif args.command == 'poll':
             poll(args.socket, args.client)
         else:
-            pick(args.socket, args.client)
+            pick(args.socket, args.client, args.focus)
     except (OSError, ValueError, subprocess.SubprocessError):
         if args.client:
             try:

@@ -58,7 +58,9 @@ reports its usual error. Search matches the displayed name.
 The example uses synthetic conversations and output captured from the real popup.
 
 It opens in navigation mode with your current agent pane highlighted. If your
-current pane is not listed, it starts on the first row.
+current pane is not listed, it starts on the first row. Clicking a desktop
+notification opens it highlighting the notifying agent instead (see
+[Desktop notifications](#desktop-notifications)).
 
 - `j` moves down; `k` moves up. Arrow keys work too.
 - `0`–`9` immediately open the correspondingly labeled row. The first ten rows
@@ -215,36 +217,36 @@ rewrite. The optional `stow/scripts/tmux-agent-notify` helper uses Python 3's
 standard library. It resolves beside the spinner's real source, including when
 the installed spinner is a Stow symlink. Missing Python on Linux, a missing helper,
 failed notification commands, and unsupported platforms leave existing monitoring
-and sound behavior intact. Immediate OS commands have a five-second timeout. Ghostty tty lookup and
-`terminal-notifier` delivery can wait for macOS permission dialogs in their
+and sound behavior intact. Immediate OS commands have a five-second timeout;
+`terminal-notifier` delivery can wait for macOS permission dialogs in its
 background worker without blocking the monitor or holding its handover lock.
-After tty lookup, the worker rechecks the completion and popup mute before
-delivery; resumed or acknowledged work and superseded events are suppressed.
 
-| Platform | Delivery | Click navigation |
+| Platform | Delivery | Click |
 | --- | --- | --- |
-| Linux | `notify-send`, including from non-Ghostty terminals | Informational only. Ghostty 1.3.1 does not provide reliable external window/tab targeting. |
-| macOS with `terminal-notifier` | Native notification | Selects the exact pane when Ghostty tty lookup identifies the sole attached client; otherwise brings Ghostty forward. |
+| Linux (Omarchy) | `notify-send` with an `omarchy-exec-argv` hint | Focuses Ghostty with `omarchy-hyprland-focus-app`, then opens the agent picker. |
+| macOS with `terminal-notifier` | Native notification | Activates Ghostty, then opens the agent picker. |
 | macOS without `terminal-notifier` | `osascript display notification` | Informational only. |
 
-Ghostty 1.3.1's macOS AppleScript dictionary lacks tty lookup. Newer builds may
-provide it; the helper probes the running API rather than relying on a version
-number. Unsupported APIs, non-Ghostty clients, shared sessions, linked windows,
-and ambiguous matches receive a popup that activates Ghostty without selecting a
-tmux session or pane. Ghostty is the fallback app even for detached sessions or
-clients in other terminals.
-No notification helper is installed automatically. On macOS, notification and
-Ghostty Automation permissions are controlled by the OS.
+Clicking a notification opens the `prefix b` agent picker on the most recently
+active terminal tmux client (control-mode clients are skipped), highlighting the
+notifying agent's row. Enter jumps to it; Escape closes the picker without
+navigating. If that pane closed or is no longer listed, the picker starts on its
+usual row. The click identifies the pane only by socket and pane ID, so after the
+tmux server restarts on the same socket, an old notification may highlight an
+unrelated agent that reused the ID. The click never navigates by itself, so an
+old notification cannot move you anywhere unexpected. With no attached terminal
+client, the click only focuses Ghostty. Attention clears through the normal
+focused-window rule, not directly from the click.
 
-An exact-target click focuses the matched Ghostty terminal and selects the exact tmux
-pane. It rechecks the server, completion identity, client attachment, live pane
-membership, and Ghostty terminal before navigating. Old notifications cannot
-navigate to a later completion or a closed pane. A moved pane is followed only
-within its original session. If another client is already attached or Ghostty cannot focus the
-matched terminal, the click does nothing. If a client attaches while Ghostty is
-being focused, tmux navigation is refused; the intended terminal may already have
-been raised. Attention clears through the normal
-focused-window rule, not directly from the callback.
+The click command carries the helper's own PATH (inherited from tmux), because
+`terminal-notifier` runs it under launchd's minimal PATH, and runs the picker
+beside the helper's real source. Omarchy's notification shell runs the `omarchy-exec-argv` hint itself,
+including from notification history; other Linux notification daemons ignore the
+hint and their popups stay informational. If the client already shows any tmux
+popup, tmux keeps that popup (retitling it) instead of opening the picker. On a
+machine with several Ghostty windows, Linux focuses the first one Hyprland reports.
+No notification helper is installed automatically. On macOS, notification
+permissions are controlled by the OS.
 
 Disable only popups:
 
@@ -308,16 +310,16 @@ and Linux `flock`. Notification tests record OS command boundaries and execute
 captured callbacks against real private tmux servers; they do not show live
 desktop popups. The attention suite also runs on macOS with tmux 3.8, BSD awk,
 and the Python lock fallback, and on Linux with tmux 3.5a, mawk, and `flock`.
-macOS and Linux notification commands use controlled fixtures. Native desktop
-delivery, AppleScript permissions, and Ghostty focus still need a desktop smoke check.
+macOS and Linux notification commands use controlled fixtures; click tests run
+the captured click command and accept the real picker popup. Native desktop
+delivery, Ghostty activation, and Omarchy's click handling still need a desktop
+smoke check.
 
-For a Mac smoke check, use a private tmux socket in Ghostty with these scripts.
-Run synthetic work in a background window, then confirm one native popup and an
-unread check. Verify that clicking brings Ghostty forward on Ghostty 1.3.1; on a build with tty
-lookup and `terminal-notifier`, click and confirm the exact window/tab and pane.
-Repeat with two clients sharing the session; the click should activate Ghostty
-without switching tmux panes. Close the target pane after receiving an exact-target
-notification and confirm its click does nothing. Disable popups and confirm the check still works.
+For a smoke check, use a private tmux socket in Ghostty with these scripts. Run
+synthetic work in a background window, then confirm one native popup and an
+unread check. Click it and confirm Ghostty comes forward with the agent picker
+open on the notifying agent; Enter should jump there. On Omarchy, repeat the click
+from notification history. Disable popups and confirm the check still works.
 Stop that private server when finished.
 
 A worktree checkout does **not** update existing Stow links: verify their actual
