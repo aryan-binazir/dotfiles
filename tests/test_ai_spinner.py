@@ -251,12 +251,11 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         return json.loads(hint.split(":", 2)[2])
 
     def notified_agent(self, platform):
-        """Return a done agent's click argv while a blocked agent sorts above it in the picker."""
         env = self.notification_tools(platform)
         self.env.update(env)
-        decoy, _ = self.agent_screen("claude", "decoy")
+        listed_above_target, _ = self.agent_screen("claude", "decoy")
         target, _ = self.agent_screen("codex", "target")
-        self.tmux("set-option", "-p", "-t", decoy, "@ai_attention_state", "blocked")
+        self.tmux("set-option", "-p", "-t", listed_above_target, "@ai_attention_state", "blocked")
         self.tmux("set-option", "-p", "-t", target, "@ai_attention_state", "done")
         subprocess.run([sys.executable, str(ROOT / "stow/scripts/tmux-agent-notify"), "notify",
                         "--socket", self.socket, "--pane", target], env=self.env, check=True, timeout=10)

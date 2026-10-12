@@ -284,7 +284,7 @@ def main():
     parser.add_argument('command', choices=['list', 'open', 'pick', 'poll'])
     parser.add_argument('--socket', default=os.environ.get('PICKER_SOCKET'))
     parser.add_argument('--client', default=os.environ.get('PICKER_CLIENT'))
-    parser.add_argument('--focus', help='pane to highlight initially instead of the current one')
+    parser.add_argument('--focus')
     args = parser.parse_args()
     if not args.socket:
         parser.error('--socket is required')

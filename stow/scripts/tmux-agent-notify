@@ -18,7 +18,7 @@ def run(*args, input=None, timeout=5):
 
 
 def click_argv(socket, pane):
-    # Notifiers run clicks with a minimal PATH (launchd on macOS), so carry ours for tmux and fzf.
+    # terminal-notifier runs -execute under launchd's minimal PATH, which lacks Homebrew's tmux and fzf.
     return ["/usr/bin/env", "PATH=" + os.environ.get("PATH", ""), sys.executable,
             str(Path(__file__).resolve()), "click", "--socket", socket, "--pane", pane]
 
