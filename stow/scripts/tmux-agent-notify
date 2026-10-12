@@ -29,12 +29,13 @@ def click(socket, pane):
             run("omarchy-hyprland-focus-app", "com.mitchellh.ghostty")
         except subprocess.SubprocessError:
             pass
-    rows = [row.split("\t", 1) for row in
-            run("tmux", "-S", socket, "list-clients", "-f", "#{!:#{client_control_mode}}",
-                "-F", "#{client_activity}\t#{client_name}").splitlines()]
-    if not rows:
+    rows = [row.split("\t", 2) for row in
+            run("tmux", "-S", socket, "list-clients", "-F",
+                "#{client_control_mode}\t#{client_activity}\t#{client_name}").splitlines()]
+    terminals = [row for row in rows if row[0] == "0"]
+    if not terminals:
         return
-    client = max(rows, key=lambda row: int(row[0]))[1]
+    client = max(terminals, key=lambda row: int(row[1]))[2]
     picker = Path(__file__).resolve().with_name("tmux-agent-picker")
     subprocess.Popen([sys.executable, str(picker), "open", "--socket", socket, "--client", client, "--focus", pane],
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

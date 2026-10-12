@@ -124,9 +124,6 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
 '''
         for name in ("uname", "notify-send", "terminal-notifier", "osascript", "omarchy-hyprland-focus-app"):
             path = tools / name
-            path.unlink(missing_ok=True)
-            if name == "omarchy-hyprland-focus-app" and platform != "Linux":
-                continue
             path.write_text(body)
             path.chmod(0o755)
         self.tmux("set-option", "-g", "@ai_notifications", "on")
@@ -307,6 +304,7 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         before = self.client_pane(idle_client)
         time.sleep(1.1)
         active = self.attach()
+        self.until(lambda: len(self.tmux("list-clients", "-F", "#{client_name}").split()) == 2, "second client attached")
         active_client = next(c for c in self.tmux("list-clients", "-F", "#{client_name}").split() if c != idle_client)
         argv, target = self.notified_agent("Linux")
         self.click(argv)
@@ -328,6 +326,23 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.accept_picker(master)
         self.until(lambda: self.client_pane(client) == target, "terminal client switched")
 
+    @unittest.skipUnless(shutil.which("fzf"), "fzf is required")
+    def test_click_works_with_tmux_lacking_the_list_clients_filter_flag(self):
+        master = self.attach()
+        client = self.tmux("list-clients", "-F", "#{client_name}").strip()
+        argv, target = self.notified_agent("Linux")
+        real_tmux = shutil.which("tmux")
+        wrapper = self.directory / "notification-tools" / "tmux"
+        wrapper.write_text(f"#!{sys.executable}\n" +
+                           "import os, sys\n" +
+                           "if 'list-clients' in sys.argv and '-f' in sys.argv[sys.argv.index('list-clients'):]:\n" +
+                           "    sys.exit('unknown flag -f')\n" +
+                           f"os.execv({real_tmux!r}, [{real_tmux!r}, *sys.argv[1:]])\n")
+        wrapper.chmod(0o755)
+        self.click(argv)
+        self.accept_picker(master)
+        self.until(lambda: self.client_pane(client) == target, "client switched to the notifying agent")
+
     def test_mac_delivery_can_wait_longer_than_five_seconds_for_permission(self):
         env = {**self.env, **self.notification_tools("Darwin"), "AI_TEST_PERMISSION_DELAY": "6"}
         self.tmux("set-option", "-p", "-t", self.pane, "@ai_attention_state", "done")
@@ -341,8 +356,8 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.assertEqual([row["tool"] for row in self.notification_records()][-1], "omarchy-hyprland-focus-app")
 
     def test_hostile_socket_path_round_trips_through_the_click_command(self):
-        marker = self.directory / "must-not-exist"
-        socket = self.directory / 'quoted " $(touch must-not-exist) [*]' / "tmux.sock"
+        marker = self.directory / "m"
+        socket = self.directory / 'q" $(touch m) [*]' / "s"
         socket.parent.mkdir()
         socket = str(socket)
         subprocess.run(["tmux", "-S", socket, "-f", "/dev/null", "new-session", "-d", "sleep 300"],
