@@ -114,9 +114,11 @@ command, and ignored by the picker if its recorded command does not match.
 tool output. The picker captures up to 80 visible rows per listed pane in one
 additional batched tmux request, only when the picker lists or refreshes agents.
 It keeps at most 100 printable characters on one line. Recognizable composers,
-drafts, spinner lines, and footer controls are excluded. Unknown input layouts
+drafts, spinner lines, and footer controls are excluded. Ambiguous or unknown input layouts
 leave Output blank; the snippet is not guaranteed to be an assistant message.
 Missing or timed-out captures leave the metadata and navigation available.
+Each optional capture or retry query has a 200 ms timeout. Column spacing
+compresses when the client's popup width cannot fit the usual padding.
 Output is not stored in pane options and does not change attention detection.
 
 ![Filtering by completion age](images/tmux-agent-picker-age-search.png)

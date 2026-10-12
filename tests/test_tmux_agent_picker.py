@@ -86,10 +86,10 @@ class PickerTest(unittest.TestCase):
                 except OSError:
                     break
 
-    def attach(self, session='home'):
+    def attach(self, session='home', columns=120):
         before = self.tmux('list-clients', '-F', '#{client_name}').splitlines()
         fd, slave = pty.openpty()
-        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 35, 120, 0, 0))
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 35, columns, 0, 0))
         process = subprocess.Popen(['tmux', '-S', self.socket, 'attach', '-t', session],
                                    env=self.env, stdin=slave, stdout=slave, stderr=slave)
         os.close(slave)
@@ -337,6 +337,75 @@ class PickerTest(unittest.TestCase):
                   shlex.join([str(self.directory / 'claude'), '-c', body]))
         self.until(lambda: 'private draft' in self.tmux('capture-pane', '-p', '-t', pane))
         self.assertNotIn('private draft', self.listing())
+
+    def test_multiline_draft_quotes_never_become_output(self):
+        cases = [('claude', '❯'), ('codex', '›'), ('cursor-agent', '>')]
+        for command, prompt in cases:
+            with self.subTest(command=command):
+                pane = self.agent(command)
+                screen = 'Checked the files.\n' + prompt + ' private draft\nprivate continuation\n> private quote'
+                body = "printf '%s\\n' " + shlex.quote(screen) + "; while IFS= read -r line; do :; done"
+                self.tmux('respawn-pane', '-k', '-t', pane,
+                          shlex.join([str(self.directory / command), '-c', body]))
+                self.until(lambda: 'private quote' in self.tmux('capture-pane', '-p', '-t', pane))
+                row = next(row for row in self.listing().splitlines() if row.startswith(pane + '\t'))
+                self.assertNotIn('private', row)
+                if command != 'cursor-agent':
+                    self.assertIn('Checked the files.', row)
+
+    def test_pi_composer_is_protected_under_supported_runtimes_and_pasted_rules(self):
+        for command in ('pi', 'node', 'bun', 'uv'):
+            for pasted in (False, True):
+                with self.subTest(command=command, pasted=pasted):
+                    pane = self.agent(command, state='blocked')
+                    screen = ('Checked the files.\n──────────\nprivate draft\n'
+                              + ('──────────\nprivate continuation\n' if pasted else '')
+                              + '> private quote\n────────── INSERT\n↑12 ↓34 model')
+                    body = "printf '%s\\n' " + shlex.quote(screen) + "; while IFS= read -r line; do :; done"
+                    self.tmux('respawn-pane', '-k', '-t', pane,
+                              shlex.join([str(self.directory / command), '-c', body]))
+                    self.until(lambda: 'private quote' in self.tmux('capture-pane', '-p', '-t', pane))
+                    row = next(row for row in self.listing().splitlines() if row.startswith(pane + '\t'))
+                    self.assertNotIn('private', row)
+                    if not pasted:
+                        self.assertIn('Checked the files.', row)
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_stalled_optional_capture_does_not_delay_popup_opening(self):
+        pane = self.agent('claude', window='capture-stall', state='done')
+        self.tmux('set-option', '-p', '-t', pane, '@ai_attention_age',
+                  'done:' + str(int(time.time()) - 300) + ':claude')
+        tools = self.directory / 'stall-tools'
+        tools.mkdir()
+        wrapper = tools / 'tmux'
+        wrapper.write_text('#!' + sys.executable + '\nimport os, sys, time\n'
+                           'if "capture-pane" in sys.argv: time.sleep(30)\n'
+                           'os.execv(' + repr(shutil.which('tmux')) + ', ["tmux", *sys.argv[1:]])\n')
+        wrapper.chmod(0o755)
+        self.tmux('set-environment', '-g', 'PATH', str(tools) + ':' + self.env['PATH'])
+        self.load_binding()
+        fd, _ = self.attach()
+        started = time.monotonic()
+        self.open_popup(fd)
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertIn(b'finished 5m ago', self.output[fd])
+        os.write(fd, b'\x1b')
+
+    @unittest.skipUnless(shutil.which('fzf'), 'fzf is required')
+    def test_narrow_popup_keeps_age_and_output_visible(self):
+        pane = self.agent('codex', window='agent', state='done')
+        body = "printf '%s\\n' 'Checked files.' '›'; while IFS= read -r line; do :; done"
+        self.tmux('respawn-pane', '-k', '-t', pane,
+                  shlex.join([str(self.directory / 'codex'), '-c', body]))
+        self.until(lambda: 'Checked files.' in self.tmux('capture-pane', '-p', '-t', pane))
+        self.tmux('set-option', '-p', '-t', pane, '@ai_attention_age',
+                  'done:' + str(int(time.time()) - 300) + ':codex')
+        self.load_binding()
+        fd, _ = self.attach(columns=80)
+        self.open_popup(fd)
+        self.assertIn(b'finished 5m ago', self.output[fd])
+        self.assertIn(b'Checked', self.output[fd])
+        os.write(fd, b'\x1b')
 
     def test_failed_output_capture_keeps_the_agent_list_and_age_available(self):
         pane = self.agent('claude', window='capture-failure', state='done')

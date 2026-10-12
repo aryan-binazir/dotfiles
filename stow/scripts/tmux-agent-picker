@@ -22,16 +22,16 @@ FIELDS = ('pane_id', 'session_id', 'window_id', 'window_index', 'pane_index',
 TITLE_LIMIT = 256
 
 
-def tmux(socket, *args):
+def tmux(socket, *args, timeout=5):
     return subprocess.run(['tmux', '-S', socket, *args], check=True,
-                          text=True, errors='replace', capture_output=True, timeout=5).stdout.rstrip('\n')
+                          text=True, errors='replace', capture_output=True, timeout=timeout).stdout.rstrip('\n')
 
 
-def panes(socket):
+def panes(socket, timeout=5):
     fmt = '\t'.join('#{s|[\x01-\x1f\x7f]| |:' +
                     (f'#{{={TITLE_LIMIT}:pane_title}}' if field == 'pane_title' else field) + '}'
                     for field in FIELDS)
-    rows = tmux(socket, 'list-panes', '-a', '-F', fmt)
+    rows = tmux(socket, 'list-panes', '-a', '-F', fmt, timeout=timeout)
     return [dict(zip(FIELDS, (''.join(c if c.isprintable() else ' ' for c in field) for field in fields)))
             for row in rows.split('\n') if len(fields := row.split('\t')) == len(FIELDS)]
 
@@ -47,11 +47,11 @@ def status(state, frame):
 
 
 def client_session(socket, client):
-    rows = tmux(socket, 'list-clients', '-F', '#{client_name}\t#{session_id}')
+    rows = tmux(socket, 'list-clients', '-F', '#{client_name}\t#{session_id}\t#{client_width}')
     for row in rows.splitlines():
-        name, session = row.split('\t', 1)
+        name, session, width = row.split('\t')
         if name == client:
-            return session
+            return session, int(width)
     raise ValueError('Client detached')
 
 
@@ -71,12 +71,12 @@ def visible_output(socket, rows, retry=True):
     commands.pop()
     try:
         result = subprocess.run(['tmux', '-S', socket, *commands], text=True, errors='replace',
-                                capture_output=True, timeout=5)
+                                capture_output=True, timeout=.2)
     except (OSError, subprocess.TimeoutExpired):
         return {}
     if result.returncode and retry:
         try:
-            live = {pane['pane_id'] for pane in panes(socket)}
+            live = {pane['pane_id'] for pane in panes(socket, timeout=.2)}
         except (OSError, subprocess.SubprocessError):
             live = {pane['pane_id'] for pane in rows}
         remaining = [pane for pane in rows if pane['pane_id'] in live]
@@ -95,12 +95,19 @@ def visible_output(socket, rows, retry=True):
     snippets = {}
     for pane in rows:
         lines = screens.get(pane['pane_id'], [])
-        prompts = [i for i, line in enumerate(lines) if re.match(r'^[❯›>]($|\s)', line)]
+        command = pane['pane_current_command']
+        prompt = ('❯' if command == 'claude' or re.fullmatch(r'\d+\.\d+\.\d+', command)
+                  else '›' if command.startswith('codex') else '>' if command == 'cursor-agent' else None)
+        prompts = [i for i, line in enumerate(lines) if prompt and re.match('^' + prompt + r'($|\s)', line)]
         rules = [i for i, line in enumerate(lines) if re.match(r'^[─━]{3,}', line)]
-        if pane['pane_current_command'] == 'pi' and len(rules) >= 2:
-            end = rules[-2]
+        if len(rules) >= 2:
+            if len(rules) != 2:
+                continue
+            end = rules[0]
+        elif len(prompts) == 1:
+            end = prompts[0]
         elif prompts:
-            end = prompts[-1]
+            continue
         elif pane['@ai_attention_state'].startswith('blocked'):
             hints = [i for i, line in enumerate(lines) if re.match(
                 r'(?i)^(↑↓ navigate|enter (submit|to)|esc cancel|press enter to)', line)]
@@ -124,7 +131,7 @@ def visible_output(socket, rows, retry=True):
 
 
 def listing(socket, client=None):
-    current = client_session(socket, client) if client else ''
+    current, client_width = client_session(socket, client) if client else ('', 0)
     snapshot = sorted(panes(socket), key=lambda p: (p['session_id'] != current, int(p['session_id'][1:])))
     rows = []
     seen = set()
@@ -170,10 +177,11 @@ def listing(socket, client=None):
     snippets = visible_output(socket, [row[1] for row in rows])
     header = ('SESSION', 'WINDOW', 'AGENT', 'STATUS', 'AGE')
     widths = [max(len(columns[i]) for columns in [header] + [row[2] for row in rows]) for i in range(5)]
+    spacing = ' ' if client_width and sum(widths) + 28 > int(client_width * .85) - 8 else '    '
     def render(columns, output=''):
-        metadata = '    '.join(value.center(width) if i == 3 else value.ljust(width)
+        metadata = spacing.join(value.center(width) if i == 3 else value.ljust(width)
                                for i, (value, width) in enumerate(zip(columns, widths)))
-        return metadata + '    \t' + output if output else metadata.rstrip()
+        return metadata + spacing + '\t' + output if output else metadata.rstrip()
     lines = ['\t\t#\t' + render(header, 'OUTPUT')]
     lines.extend(f"{pane['pane_id']}\t{pane['session_id']}\t{i if i < 10 else ' '}\t{render(columns, snippets.get(pane['pane_id'], ''))}"
                  for i, (_, pane, columns) in enumerate(rows))
@@ -254,7 +262,7 @@ def pick(socket, client):
         return
     result.check_returncode()
     pane_id, session_id, _ = result.stdout.rstrip('\n').split('\t', 2)
-    current = client_session(socket, client)
+    current, _ = client_session(socket, client)
     candidates = [p for p in panes(socket) if p['pane_id'] == pane_id]
     candidates.sort(key=lambda p: (p['session_id'] != session_id, p['session_id'] != current,
                                    int(p['session_id'][1:])))
