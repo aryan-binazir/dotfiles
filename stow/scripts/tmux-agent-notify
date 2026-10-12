@@ -24,13 +24,14 @@ def click_argv(socket, pane):
 
 
 def click(socket, pane):
-    if run("uname", "-s") == "Linux" and shutil.which("omarchy-hyprland-focus-app"):
+    if shutil.which("omarchy-hyprland-focus-app"):
         try:
             run("omarchy-hyprland-focus-app", "com.mitchellh.ghostty")
         except subprocess.SubprocessError:
             pass
     rows = [row.split("\t", 1) for row in
-            run("tmux", "-S", socket, "list-clients", "-F", "#{client_activity}\t#{client_name}").splitlines()]
+            run("tmux", "-S", socket, "list-clients", "-f", "#{!:#{client_control_mode}}",
+                "-F", "#{client_activity}\t#{client_name}").splitlines()]
     if not rows:
         return
     client = max(rows, key=lambda row: int(row[0]))[1]
@@ -87,7 +88,7 @@ def main():
             notify(args.socket, args.pane, args.event)
         else:
             click(args.socket, args.pane)
-    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+    except (OSError, ValueError, subprocess.SubprocessError):
         return
 
 

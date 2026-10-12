@@ -114,6 +114,8 @@ name = pathlib.Path(sys.argv[0]).name
 if name == "uname":
     print(os.environ["AI_TEST_OS"])
     sys.exit(0)
+if name == "terminal-notifier" and os.environ.get("AI_TEST_PERMISSION_DELAY"):
+    time.sleep(float(os.environ["AI_TEST_PERMISSION_DELAY"]))
 with open(os.environ["AI_TEST_NOTIFICATIONS"], "a") as output:
     output.write(json.dumps({"tool": name, "args": sys.argv[1:], "pid": os.getpid()}) + "\n")
 if os.environ.get("AI_TEST_BACKEND_DELAY"):
@@ -122,6 +124,9 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
 '''
         for name in ("uname", "notify-send", "terminal-notifier", "osascript", "omarchy-hyprland-focus-app"):
             path = tools / name
+            path.unlink(missing_ok=True)
+            if name == "omarchy-hyprland-focus-app" and platform != "Linux":
+                continue
             path.write_text(body)
             path.chmod(0o755)
         self.tmux("set-option", "-g", "@ai_notifications", "on")
@@ -293,7 +298,6 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.click(["/bin/sh", "-c", shlex.join(argv)], env={**self.env, "PATH": "/no-tools"})
         self.accept_picker(master)
         self.until(lambda: self.client_pane(client) == target, "client switched to the notifying agent")
-        self.assertFalse(any(row["tool"] == "omarchy-hyprland-focus-app" for row in self.notification_records()))
 
     @unittest.skipUnless(shutil.which("fzf"), "fzf is required")
     def test_click_opens_the_picker_on_the_most_recently_active_client(self):
@@ -310,25 +314,57 @@ sys.exit(int(os.environ.get("AI_TEST_BACKEND_EXIT", "0")))
         self.until(lambda: self.client_pane(active_client) == target, "active client switched")
         self.assertEqual(self.client_pane(idle_client), before)
 
+    @unittest.skipUnless(shutil.which("fzf"), "fzf is required")
+    def test_click_ignores_a_more_recently_active_control_mode_client(self):
+        master = self.attach()
+        client = self.tmux("list-clients", "-F", "#{client_name}").strip()
+        time.sleep(1.1)
+        control = subprocess.Popen(["tmux", "-S", self.socket, "-C", "attach-session", "-t", "test"],
+                                   stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, env=self.env)
+        self.processes.append(control)
+        self.until(lambda: len(self.tmux("list-clients", "-F", "#{client_name}").split()) == 2, "control client attached")
+        argv, target = self.notified_agent("Linux")
+        self.click(argv)
+        self.accept_picker(master)
+        self.until(lambda: self.client_pane(client) == target, "terminal client switched")
+
+    def test_mac_delivery_can_wait_longer_than_five_seconds_for_permission(self):
+        env = {**self.env, **self.notification_tools("Darwin"), "AI_TEST_PERMISSION_DELAY": "6"}
+        self.tmux("set-option", "-p", "-t", self.pane, "@ai_attention_state", "done")
+        subprocess.run([sys.executable, str(ROOT / "stow/scripts/tmux-agent-notify"), "notify",
+                        "--socket", self.socket, "--pane", self.pane], env=env, check=True, timeout=20)
+        self.assertTrue(any(row["tool"] == "terminal-notifier" for row in self.notification_records()))
+
     def test_click_without_an_attached_client_only_focuses_ghostty(self):
         argv, _ = self.notified_agent("Linux")
         self.click(argv)
         self.assertEqual([row["tool"] for row in self.notification_records()][-1], "omarchy-hyprland-focus-app")
 
-    def test_hostile_names_do_not_change_the_numeric_click_argv(self):
+    def test_hostile_socket_path_round_trips_through_the_click_command(self):
         marker = self.directory / "must-not-exist"
-        hostile = 'quoted " $(touch ' + str(marker) + ') [*]'
-        self.tmux("rename-session", "-t", self.session, hostile)
-        self.tmux("rename-window", "-t", self.window, hostile)
+        socket = self.directory / 'quoted " $(touch must-not-exist) [*]' / "tmux.sock"
+        socket.parent.mkdir()
+        socket = str(socket)
+        subprocess.run(["tmux", "-S", socket, "-f", "/dev/null", "new-session", "-d", "sleep 300"],
+                       env=self.env, check=True, timeout=5)
+        self.addCleanup(subprocess.run, ["tmux", "-S", socket, "kill-server"], env=self.env, capture_output=True)
+        pane = subprocess.run(["tmux", "-S", socket, "display-message", "-p", "#{pane_id}"], env=self.env,
+                              check=True, capture_output=True, text=True, timeout=5).stdout.strip()
+        subprocess.run(["tmux", "-S", socket, "set-option", "-p", "-t", pane, "@ai_attention_state", "done"],
+                       env=self.env, check=True, timeout=5)
         for platform in ("Linux", "Darwin"):
             with self.subTest(platform=platform):
                 env = {**self.env, **self.notification_tools(platform)}
-                self.tmux("set-option", "-p", "-t", self.pane, "@ai_attention_state", "done")
+                subprocess.run(["tmux", "-S", socket, "set-option", "-g", "@ai_notifications", "on"],
+                               env=self.env, check=True, timeout=5)
                 subprocess.run([sys.executable, str(ROOT / "stow/scripts/tmux-agent-notify"), "notify",
-                                "--socket", self.socket, "--pane", self.pane], env=env, check=True, timeout=10)
-                record = self.notification_records()[-1]
-                self.assertEqual(self.click_argv(record)[-4:], ["--socket", self.socket, "--pane", self.pane])
-                self.click(self.click_argv(record), env=env)
+                                "--socket", socket, "--pane", pane], env=env, check=True, timeout=10)
+                record = [row for row in self.notification_records() if row["tool"] in ("notify-send", "terminal-notifier")][-1]
+                argv = self.click_argv(record)
+                self.assertEqual(argv[-4:], ["--socket", socket, "--pane", pane])
+                command = argv if platform == "Linux" else ["/bin/sh", "-c", shlex.join(argv)]
+                result = subprocess.run(command, env=env, cwd=self.directory, capture_output=True, text=True, timeout=10)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
         self.assertFalse(marker.exists())
 
     def test_failed_replacement_preparation_preserves_the_running_daemon(self):

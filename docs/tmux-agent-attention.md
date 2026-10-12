@@ -228,16 +228,19 @@ background worker without blocking the monitor or holding its handover lock.
 | macOS without `terminal-notifier` | `osascript display notification` | Informational only. |
 
 Clicking a notification opens the `prefix b` agent picker on the most recently
-active tmux client, highlighting the notifying agent's row. Enter jumps to it;
-Escape closes the picker without navigating. If that pane closed or is no longer
-listed, the picker starts on its usual row. The click never navigates by itself,
-so an old notification cannot move you anywhere unexpected. With no attached
+active terminal tmux client (control-mode clients are skipped), highlighting the
+notifying agent's row. Enter jumps to it; Escape closes the picker without
+navigating. If that pane closed or is no longer listed, the picker starts on its
+usual row. The click identifies the pane only by socket and pane ID, so after the
+tmux server restarts on the same socket, an old notification may highlight an
+unrelated agent that reused the ID. The click never navigates by itself, so an
+old notification cannot move you anywhere unexpected. With no attached terminal
 client, the click only focuses Ghostty. Attention clears through the normal
 focused-window rule, not directly from the click.
 
-The click command carries the notifier's PATH, because `terminal-notifier` runs
-it under launchd's minimal PATH, and runs the picker beside the helper's real
-source. Omarchy's notification shell runs the `omarchy-exec-argv` hint itself,
+The click command carries the helper's own PATH (inherited from tmux), because
+`terminal-notifier` runs it under launchd's minimal PATH, and runs the picker
+beside the helper's real source. Omarchy's notification shell runs the `omarchy-exec-argv` hint itself,
 including from notification history; other Linux notification daemons ignore the
 hint and their popups stay informational. If the client already shows any tmux
 popup, tmux keeps that popup (retitling it) instead of opening the picker. On a
