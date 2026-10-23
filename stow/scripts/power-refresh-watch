@@ -1,0 +1,12 @@
+#!/bin/bash
+# Linux only (Omarchy/Hyprland + power-profiles-daemon).
+# Reload Hyprland whenever the power profile changes, so monitors.lua picks
+# the internal panel's refresh rate for the new profile.
+
+hyprctl reload >/dev/null # catch a profile set before we subscribed
+
+gdbus monitor --system --dest org.freedesktop.UPower.PowerProfiles \
+  --object-path /org/freedesktop/UPower/PowerProfiles |
+  while read -r line; do
+    [[ $line == *ActiveProfile* ]] && hyprctl reload >/dev/null
+  done
