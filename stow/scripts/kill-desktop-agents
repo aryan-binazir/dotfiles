@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+from pathlib import Path
+import select
+import signal
+import sys
+import time
+
+
+DESKTOP_EXECUTABLES = {
+    "/usr/lib/chatgpt/ChatGPT",
+    "/usr/lib/claude-desktop/claude-desktop",
+}
+
+
+def snapshot() -> dict[int, tuple[int, int, str]]:
+    processes = {}
+    for directory in Path("/proc").glob("[0-9]*"):
+        try:
+            if directory.stat().st_uid != os.getuid():
+                continue
+            fields = (directory / "stat").read_text().rsplit(")", 1)[1].split()
+            if fields[0] in {"Z", "X"}:
+                continue
+            executable = os.readlink(directory / "exe").removesuffix(" (deleted)")
+            processes[int(directory.name)] = (
+                int(fields[1]), int(fields[19]), executable
+            )
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+    return processes
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Force-stop ChatGPT Desktop, Claude Desktop, and their helpers (Linux only)."
+    )
+    parser.add_argument("--dry-run", action="store_true", help="list targets without sending signals")
+    args = parser.parse_args()
+    if sys.platform != "linux":
+        parser.error("this command requires Linux")
+
+    package_directories = tuple(str(Path(exe).parent) + "/" for exe in DESKTOP_EXECUTABLES)
+    handles = {}
+    killed = set()
+    try:
+        while True:
+            processes = snapshot()
+            targets = {
+                pid for pid, (_, _, exe) in processes.items()
+                if exe in DESKTOP_EXECUTABLES
+            }
+            targets.update(
+                pid for pid, (started, _) in handles.items()
+                if pid in processes and processes[pid][1] == started
+            )
+            while True:
+                children = {
+                    pid for pid, (parent, _, exe) in processes.items()
+                    if parent in targets
+                    and not (
+                        Path(exe).name in {"codex", "claude"}
+                        and not exe.startswith(package_directories)
+                    )
+                }
+                if children <= targets:
+                    break
+                targets.update(children)
+
+            if args.dry_run:
+                for pid in sorted(targets):
+                    print(f"{pid}: {processes[pid][2]}")
+                print(f"Would stop {len(targets)} desktop app/helper processes.")
+                return 0
+
+            if os.getpid() in targets:
+                print("error: run this command from a terminal outside the desktop apps", file=sys.stderr)
+                return 1
+
+            new_targets = targets - handles.keys()
+            if not new_targets:
+                break
+            for pid in sorted(new_targets):
+                try:
+                    fd = os.pidfd_open(pid)
+                except ProcessLookupError:
+                    continue
+                try:
+                    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+                    executable = os.readlink(f"/proc/{pid}/exe").removesuffix(" (deleted)")
+                    if (int(fields[19]), executable) != processes[pid][1:]:
+                        os.close(fd)
+                        continue
+                    handles[pid] = (processes[pid][1], fd)
+                    signal.pidfd_send_signal(fd, signal.SIGSTOP)
+                except (FileNotFoundError, ProcessLookupError):
+                    if pid not in handles:
+                        os.close(fd)
+                except BaseException:
+                    if pid not in handles:
+                        os.close(fd)
+                    raise
+
+        if not handles:
+            print("No desktop app processes found.")
+            return 0
+
+        poller = select.poll()
+        waiting = {}
+        for pid, (_, fd) in handles.items():
+            try:
+                signal.pidfd_send_signal(fd, signal.SIGKILL)
+            except ProcessLookupError:
+                continue
+            killed.add(pid)
+            waiting[fd] = pid
+            poller.register(fd, select.POLLIN)
+
+        deadline = time.monotonic() + 3
+        while waiting and time.monotonic() < deadline:
+            for fd, _ in poller.poll(max(1, int((deadline - time.monotonic()) * 1000))):
+                waiting.pop(fd)
+                poller.unregister(fd)
+        if waiting:
+            print(f"Still exiting: {', '.join(map(str, waiting.values()))}", file=sys.stderr)
+            return 1
+        print(f"Stopped {len(killed)} desktop app/helper processes.")
+        return 0
+    except OSError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    finally:
+        for pid, (_, fd) in handles.items():
+            if pid not in killed:
+                try:
+                    signal.pidfd_send_signal(fd, signal.SIGCONT)
+                except OSError:
+                    pass
+            os.close(fd)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
