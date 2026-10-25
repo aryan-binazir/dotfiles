@@ -69,9 +69,6 @@ resize_pane_right = ["prefix+right", "ctrl+alt+shift+right"]
 # No tmux equivalent; herdr's default prefix+shift+p is taken by previous session
 rename_pane = "prefix+shift+o"
 
-# Agents
-focus_agent = "prefix+shift+1..9"
-
 # Windows -> tabs
 new_tab = "prefix+c"
 rename_tab = "prefix+comma"
@@ -98,6 +95,14 @@ key = "prefix+shift+l"
 type = "plugin_action"
 command = "ar.last-workspace.toggle"
 description = "go to last space"
+
+# Install on each machine (requires Cargo):
+#   herdr plugin install yxhta/herdr-agents-picker --ref 5904754d78899ab7bb254eb0717195603c901026
+[[keys.command]]
+key = "prefix+a"
+type = "plugin_action"
+command = "yxhta.agents-picker.open"
+description = "agents picker"
 
 [[keys.command]]
 key = "prefix+f"
