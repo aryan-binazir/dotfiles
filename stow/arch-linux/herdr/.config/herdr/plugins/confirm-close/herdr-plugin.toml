@@ -16,5 +16,5 @@ id = "confirm"
 title = "Close pane"
 placement = "popup"
 command = ["bash", "../../scripts/confirm-close.sh"]
-width = 48
-height = 5
+width = 18
+height = 4

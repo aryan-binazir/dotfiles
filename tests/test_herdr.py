@@ -64,6 +64,13 @@ class ConfirmCloseTests(unittest.TestCase):
             "socket": self.env["HERDR_SOCKET_PATH"],
         }])
 
+    def test_prompt_is_only_the_tmux_style_question_with_no_cursor(self):
+        result = self.run_helper("n")
+        self.assertIn("\033[?25l", result.stdout)
+        self.assertIn("\033[?25h", result.stdout)
+        visible = result.stdout.replace("\033[?25l", "").replace("\033[?25h", "")
+        self.assertEqual(visible.strip(), "Kill? (y/n)")
+
     def test_other_keys_and_eof_cancel_without_closing(self):
         for answer in ("n", "N", "\n", "\x1b", "q", "\\", ""):
             with self.subTest(answer=answer):
@@ -109,7 +116,7 @@ class ConfirmCloseTests(unittest.TestCase):
         result = self.run_helper("yn", {**self.env, "TEST_ERROR": "pane_not_found"})
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Close failed.", result.stdout)
-        self.assertIn("Press any key", result.stdout)
+        self.assertIn("Any key", result.stdout)
         self.assertEqual(len(self.records()), 1)
 
     def test_group_close_refusal_is_shown_without_escalating_or_retrying(self):
@@ -117,9 +124,8 @@ class ConfirmCloseTests(unittest.TestCase):
         result = self.run_helper("yn", env)
         self.assertNotEqual(result.returncode, 0)
         output = result.stdout + result.stderr
-        self.assertIn("Worktree group protected.", output)
-        self.assertIn("workspace", output)
-        self.assertIn("Press any key", output)
+        self.assertIn("Use workspace\nclose.", output)
+        self.assertIn("Any key", output)
         self.assertEqual(self.records(), [{
             "args": ["pane", "close", "w1:p2"],
             "socket": self.env["HERDR_SOCKET_PATH"],
@@ -150,7 +156,7 @@ class HerdrConfigTests(unittest.TestCase):
         pane = manifest["panes"][0]
         self.assertEqual(pane["placement"], "popup")
         self.assertEqual(pane["title"], "Close pane")
-        self.assertEqual((pane["width"], pane["height"]), (48, 5))
+        self.assertEqual((pane["width"], pane["height"]), (18, 4))
 
 
 @unittest.skipUnless(shutil.which("herdr") and shutil.which("tmux"), "Herdr and tmux are required")
@@ -228,17 +234,20 @@ class HerdrRuntimeTests(unittest.TestCase):
     def test_confirmation_is_a_compact_titled_dialog(self):
         original = self.api("pane", "current")["pane"]["pane_id"]
         self.prefix("x")
-        self.until(lambda: f"Close pane {original}?" in self.screen(), "confirmation popup")
+        self.until(lambda: "Kill? (y/n)" in self.screen(), "confirmation popup")
         lines = self.screen().splitlines()
         top = next(index for index, line in enumerate(lines) if "┌" in line and "┐" in line)
         left = lines[top].index("┌")
         right = lines[top].index("┐")
-        self.assertEqual(right - left + 1, 48)
+        self.assertEqual(right - left + 1, 18)
         self.assertIn("┌Close pane", lines[top])
-        self.assertEqual(lines[top + 4][left:right + 1], "└" + "─" * 46 + "┘")
-        self.assertNotIn("popup", "\n".join(lines[top:top + 5]))
+        self.assertEqual(lines[top + 3][left:right + 1], "└" + "─" * 16 + "┘")
+        dialog = "\n".join(lines[top:top + 4])
+        self.assertNotIn("popup", dialog)
+        self.assertNotIn(original, dialog)
+        self.assertEqual(self.tmux("display-message", "-p", "-t", "test", "#{cursor_flag}").strip(), "0")
         self.tmux("send-keys", "-t", "test", "n")
-        self.until(lambda: f"Close pane {original}?" not in self.screen(), "popup dismissed")
+        self.until(lambda: "Kill? (y/n)" not in self.screen(), "popup dismissed")
 
     def test_confirmation_can_cancel_and_keeps_the_invoker_after_focus_changes(self):
         original = self.api("pane", "current")["pane"]["pane_id"]
@@ -246,13 +255,13 @@ class HerdrRuntimeTests(unittest.TestCase):
         before = self.pane_ids()
         for answer in ("n", "Enter", "Escape"):
             self.prefix("x")
-            self.until(lambda: f"Close pane {original}?" in self.screen(), "confirmation popup")
+            self.until(lambda: "Kill? (y/n)" in self.screen(), "confirmation popup")
             self.assertEqual(self.pane_ids(), before)
             self.tmux("send-keys", "-t", "test", answer)
-            self.until(lambda: f"Close pane {original}?" not in self.screen(), "popup dismissed")
+            self.until(lambda: "Kill? (y/n)" not in self.screen(), "popup dismissed")
             self.assertEqual(self.pane_ids(), before)
         self.prefix("x")
-        self.until(lambda: f"Close pane {original}?" in self.screen(), "confirmation popup")
+        self.until(lambda: "Kill? (y/n)" in self.screen(), "confirmation popup")
         self.api("pane", "focus", "--pane", original, "--direction", "right")
         self.assertEqual(self.api("pane", "current")["pane"]["pane_id"], other)
         self.tmux("send-keys", "-t", "test", "y")
@@ -276,14 +285,14 @@ class HerdrRuntimeTests(unittest.TestCase):
         before = self.pane_ids()
         self.until(lambda: "group-root" in self.screen(), "primary workspace visible")
         self.prefix("x")
-        self.until(lambda: f"Close pane {original}?" in self.screen(), "confirmation popup")
+        self.until(lambda: "Kill? (y/n)" in self.screen(), "confirmation popup")
         self.tmux("send-keys", "-t", "test", "y")
-        self.until(lambda: "Press any key" in self.screen(), "close refusal stays visible")
-        self.assertIn("Worktree group protected.", self.screen())
-        self.assertIn("Use workspace close instead.", self.screen())
+        self.until(lambda: "Any key" in self.screen(), "close refusal stays visible")
+        self.assertIn("Use workspace", self.screen())
+        self.assertIn("close.", self.screen())
         self.assertEqual(self.pane_ids(), before)
         self.tmux("send-keys", "-t", "test", "n")
-        self.until(lambda: "Press any key" not in self.screen(), "error dismissed")
+        self.until(lambda: "Any key" not in self.screen(), "error dismissed")
         self.assertEqual(self.pane_ids(), before)
 
     def test_split_keypresses_match_tmux_and_keep_alt_directions(self):

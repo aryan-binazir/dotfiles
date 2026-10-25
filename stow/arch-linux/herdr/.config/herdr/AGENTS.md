@@ -19,7 +19,7 @@ herdr plugin install yxhta/herdr-agents-picker --ref 5904754d78899ab7bb254eb0717
 
 Plugins require registration on **each machine**, separately from config linking:
 - `ar.confirm-close`: bundled Bash, Linux/macOS, Herdr 0.9.1+. Link/register before
-  loading the config. `prefix+x` opens a 48×5-cell **Close pane** confirmation.
+  loading the config. `prefix+x` opens an 18×4-cell **Close pane** confirmation.
 - `ar.last-workspace`: bundled Bash, Linux-only. `prefix+Shift+L` toggles the last
   workspace; visit two workspaces after linking to establish history.
 - `yxhta.agents-picker`: external Rust. `prefix+a` opens list + preview;
