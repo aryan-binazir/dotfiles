@@ -23,6 +23,7 @@ Thumbs.db
 .idea/
 
 # Personal data
+.bash_aliases
 history
 *_history
 *.log
