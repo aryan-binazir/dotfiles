@@ -106,11 +106,9 @@ description = "agents picker"
 
 [[keys.command]]
 key = "prefix+x"
-type = "popup"
-command = 'bash "$HOME/.config/herdr/scripts/confirm-close.sh"'
+type = "plugin_action"
+command = "ar.confirm-close.open"
 description = "confirm close pane"
-width = "70%"
-height = "30%"
 
 [[keys.command]]
 key = "prefix+f"

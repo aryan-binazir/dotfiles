@@ -1,0 +1,20 @@
+id = "ar.confirm-close"
+name = "Close pane"
+version = "0.1.0"
+min_herdr_version = "0.9.1"
+description = "Confirm before closing a pane"
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "open"
+title = "Close pane"
+contexts = ["pane"]
+command = ["bash", "./open.sh"]
+
+[[panes]]
+id = "confirm"
+title = "Close pane"
+placement = "popup"
+command = ["bash", "../../scripts/confirm-close.sh"]
+width = 48
+height = 5

@@ -15,6 +15,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 HERDR_CONFIG = ROOT / "stow/arch-linux/herdr/.config/herdr"
 SCRIPT = HERDR_CONFIG / "scripts/confirm-close.sh"
+PLUGIN = HERDR_CONFIG / "plugins/confirm-close"
 
 
 class ConfirmCloseTests(unittest.TestCase):
@@ -92,12 +93,31 @@ class ConfirmCloseTests(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertEqual(self.records(), [])
 
+    def test_open_action_passes_its_original_invoker_to_the_dialog(self):
+        manifest = tomllib.loads((PLUGIN / "herdr-plugin.toml").read_text())
+        env = {**self.env, "HERDR_PANE_ID": "w1:p2", "HERDR_PLUGIN_ID": "ar.confirm-close"}
+        result = subprocess.run(manifest["actions"][0]["command"], cwd=PLUGIN, env=env,
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.records(), [{
+            "args": ["plugin", "pane", "open", "--plugin", "ar.confirm-close",
+                     "--entrypoint", "confirm", "--env", "HERDR_ACTIVE_PANE_ID=w1:p2"],
+            "socket": self.env["HERDR_SOCKET_PATH"],
+        }])
+
+    def test_generic_close_failure_stays_visible_without_retrying(self):
+        result = self.run_helper("yn", {**self.env, "TEST_ERROR": "pane_not_found"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Close failed.", result.stdout)
+        self.assertIn("Press any key", result.stdout)
+        self.assertEqual(len(self.records()), 1)
+
     def test_group_close_refusal_is_shown_without_escalating_or_retrying(self):
         env = {**self.env, "TEST_ERROR": "confirmation_required: closing this pane would close a worktree group"}
         result = self.run_helper("yn", env)
         self.assertNotEqual(result.returncode, 0)
         output = result.stdout + result.stderr
-        self.assertIn("confirmation_required", output)
+        self.assertIn("Worktree group protected.", output)
         self.assertIn("workspace", output)
         self.assertIn("Press any key", output)
         self.assertEqual(self.records(), [{
@@ -118,24 +138,19 @@ class HerdrConfigTests(unittest.TestCase):
         self.assertEqual(self.keys["split_horizontal"], ['prefix+"', "alt+enter"])
         self.assertEqual(self.keys["split_vertical"], ["prefix+percent", "alt+shift+enter"])
 
-    def test_prefix_x_runs_the_symlinked_confirmation_popup(self):
+    def test_prefix_x_opens_the_compact_titled_plugin(self):
         self.assertEqual(self.keys["close_pane"], "alt+esc")
         bindings = [item for item in self.keys["command"] if item["key"] == "prefix+x"]
         self.assertEqual(len(bindings), 1)
-        self.assertEqual(bindings[0]["type"], "popup")
-        with tempfile.TemporaryDirectory(prefix="herdr home ") as home:
-            installed = Path(home) / ".config/herdr/scripts/confirm-close.sh"
-            installed.parent.mkdir(parents=True)
-            installed.symlink_to(SCRIPT)
-            env = {key: value for key, value in os.environ.items()
-                   if not key.startswith("HERDR_")}
-            env.update(HOME=home, HERDR_ACTIVE_PANE_ID="w1:p2", HERDR_SOCKET_PATH="unused.sock")
-            result = subprocess.run(
-                ["sh", "-c", bindings[0]["command"]], input="n", env=env,
-                capture_output=True, text=True, timeout=5,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("Close pane w1:p2?", result.stdout)
+        self.assertEqual(bindings[0]["type"], "plugin_action")
+        self.assertEqual(bindings[0]["command"], "ar.confirm-close.open")
+        manifest = tomllib.loads((PLUGIN / "herdr-plugin.toml").read_text())
+        self.assertEqual(manifest["id"], "ar.confirm-close")
+        self.assertEqual(manifest["platforms"], ["linux", "macos"])
+        pane = manifest["panes"][0]
+        self.assertEqual(pane["placement"], "popup")
+        self.assertEqual(pane["title"], "Close pane")
+        self.assertEqual((pane["width"], pane["height"]), (48, 5))
 
 
 @unittest.skipUnless(shutil.which("herdr") and shutil.which("tmux"), "Herdr and tmux are required")
@@ -146,8 +161,8 @@ class HerdrRuntimeTests(unittest.TestCase):
         self.directory = Path(temporary.name)
         home = self.directory / "home with spaces"
         config = home / ".config/herdr"
-        (config / "scripts").mkdir(parents=True)
-        (config / "scripts/confirm-close.sh").symlink_to(SCRIPT)
+        (config / "plugins").mkdir(parents=True)
+        (config / "plugins/confirm-close").symlink_to(PLUGIN, target_is_directory=True)
         staged = self.directory / "config.toml"
         staged.write_text((HERDR_CONFIG / "config.toml").read_text() +
                           '\n[update]\nversion_check = false\nmanifest_check = false\n'
@@ -170,6 +185,7 @@ class HerdrRuntimeTests(unittest.TestCase):
         self.tmux("-f", "/dev/null", "new-session", "-d", "-s", "test", "-x", "140", "-y", "40",
                   "exec env -u TMUX -u TMUX_PANE " + shlex.quote(shutil.which("herdr")))
         self.until(lambda: self.cli("pane", "list", check=False).returncode == 0, "server ready")
+        self.api("plugin", "link", str(config / "plugins/confirm-close"))
         self.until(lambda: "spaces" in self.screen(), "client ready")
 
     def cli(self, *args, check=True):
@@ -208,6 +224,21 @@ class HerdrRuntimeTests(unittest.TestCase):
 
     def prefix(self, key):
         self.tmux("send-keys", "-t", "test", "C-b", key)
+
+    def test_confirmation_is_a_compact_titled_dialog(self):
+        original = self.api("pane", "current")["pane"]["pane_id"]
+        self.prefix("x")
+        self.until(lambda: f"Close pane {original}?" in self.screen(), "confirmation popup")
+        lines = self.screen().splitlines()
+        top = next(index for index, line in enumerate(lines) if "┌" in line and "┐" in line)
+        left = lines[top].index("┌")
+        right = lines[top].index("┐")
+        self.assertEqual(right - left + 1, 48)
+        self.assertIn("┌Close pane", lines[top])
+        self.assertEqual(lines[top + 4][left:right + 1], "└" + "─" * 46 + "┘")
+        self.assertNotIn("popup", "\n".join(lines[top:top + 5]))
+        self.tmux("send-keys", "-t", "test", "n")
+        self.until(lambda: f"Close pane {original}?" not in self.screen(), "popup dismissed")
 
     def test_confirmation_can_cancel_and_keeps_the_invoker_after_focus_changes(self):
         original = self.api("pane", "current")["pane"]["pane_id"]
@@ -248,7 +279,8 @@ class HerdrRuntimeTests(unittest.TestCase):
         self.until(lambda: f"Close pane {original}?" in self.screen(), "confirmation popup")
         self.tmux("send-keys", "-t", "test", "y")
         self.until(lambda: "Press any key" in self.screen(), "close refusal stays visible")
-        self.assertIn("confirmation_required", self.screen())
+        self.assertIn("Worktree group protected.", self.screen())
+        self.assertIn("Use workspace close instead.", self.screen())
         self.assertEqual(self.pane_ids(), before)
         self.tmux("send-keys", "-t", "test", "n")
         self.until(lambda: "Press any key" not in self.screen(), "error dismissed")
