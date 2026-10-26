@@ -80,6 +80,29 @@ class GwTest(unittest.TestCase):
                 self.assertNotIn(str(other), result.stdout)
                 self.assertNotIn(str(unrelated), result.stdout)
 
+    def test_creation_does_not_prune_missing_registered_worktrees(self):
+        (self.base / "bin" / "gb").write_text("#!/bin/sh\nexit 0\n")
+        missing = self.add_worktree("missing")
+        shutil.rmtree(missing)
+
+        result = self.gw("new")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(str(missing), self.registrations())
+        self.assertTrue(self.target("new").is_dir())
+
+    def test_requesting_a_missing_registered_worktree_keeps_its_registration(self):
+        (self.base / "bin" / "gb").write_text("#!/bin/sh\nexit 0\n")
+        missing = self.add_worktree("missing")
+        shutil.rmtree(missing)
+        registrations = self.registrations()
+
+        result = self.gw("missing")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.registrations(), registrations)
+        self.assertFalse(missing.exists())
+
     def test_clean_remove_unregisters_and_retains_branch(self):
         for requested, prefix in (("plain", "amb"), ("amb/prefixed", "amb"),
                                   ("aryan-binazir/prefixed", "aryan-binazir")):

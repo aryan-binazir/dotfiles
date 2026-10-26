@@ -74,6 +74,10 @@ can send background desktop notifications on Linux and macOS. Ghostty pane
 navigation is automatic where exact targeting is supported; other cases stay
 informational. See [behavior, controls, and safe rollout](docs/tmux-agent-attention.md).
 
+### Git branch cleanup
+
+See [cleanup safeguards and branch recovery](docs/git-branch-cleanup.md) for `gb` and `gw`.
+
 ### Separate Configs
 
 My Neovim config: https://github.com/aryan-binazir/neovim-config
