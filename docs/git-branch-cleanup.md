@@ -10,7 +10,8 @@ Automatic cleanup leaves registered worktrees and their files in place,
 including clean, dirty, locked, and missing worktrees. It also keeps branches
 involved in a rebase or bisect, the current branch, `main`, and the requested
 target branch. `gb` refuses to switch to a branch registered in another
-worktree. Use that checkout or remove it explicitly with `gw rm`.
+worktree. Use that checkout or remove it explicitly with `gw rm`. Switching
+and fast-forwarding refuse to overwrite ignored local files.
 
 `gw` preserves missing registrations. Restore the checkout or explicitly run
 `git worktree prune` before recreating a missing worktree.
@@ -28,12 +29,12 @@ then requires one of these proofs against the fetched `origin/main`:
 
 Empty squash comparisons, ambiguous history, and failed Git commands leave
 the branch in place. Shallow history cannot establish squash equivalence. Conflict
-resolutions and changes spread across multiple commits may also prevent a
-match. Kept branches produce one summary per run.
+resolutions, main changing the same files before the squash, and changes
+spread across multiple commits may also prevent a match. Kept branches produce one summary per run.
 
-Cleanup examines the original Git objects, bypassing replacement objects and
-legacy grafts. Missing objects fail the proof rather than triggering an
-implicit fetch.
+Cleanup proofs examine original Git objects, bypassing replacement objects
+and legacy grafts. Normal switching and syncing retain Git's partial-clone
+fetch behavior. A failed proof leaves the branch in place.
 
 `gb` disables automatic Git maintenance for its commands so a fetch cannot
 silently expire old worktree registrations.
@@ -60,12 +61,15 @@ git for-each-ref --format='%(refname) %(objectname)' refs/gb/pruned/
 ```
 
 Copy the desired ref into `git branch <branch-name> <recovery-ref>`. The
-restored branch has its original tip, tree, and commit history.
+restored branch has its original tip, tree, and commit history, without
+inheriting the deleted upstream. Cleanup removes obsolete branch configuration
+after pruning.
 
 Recovery refs protect committed history within this local repository. Git
-views using `--all` include that history. `gb` requires `origin` fetch
-destinations under `refs/remotes/` to keep fetch pruning away from local
-branches and recovery refs.
+views using `--all` include that history. `gb` explicitly fetches branch heads
+into `refs/remotes/origin/`, overriding configured fetch mappings for this
+command. It does not fetch or prune tags or notes. Local branches and recovery
+refs stay outside the fetch destinations.
 
 Worktree use is checked before pruning. A checkout or rebase starting after
 that check can still require restoring the branch reference. The recovery
@@ -82,4 +86,5 @@ python3 -m unittest discover -s tests -p 'test_g[wb].py'
 The tests create disposable repositories and local bare remotes. They verify
 normal and squash merges, exact restoration after garbage collection, local
 commits and file differences, worktree preservation, interrupted Git
-operations, transaction failures, and concurrent branch updates.
+operations (including stacked rebase updates), transaction failures, concurrent
+branch updates, ignored-file collisions, submodule changes, and partial clones.

@@ -345,6 +345,77 @@ class GbCleanupTest(unittest.TestCase):
         self.assertEqual(self.git("rev-parse", name).stdout.strip(), tip)
         self.assertEqual(self.git("show", f"{name}:feature.txt").stdout, "finished\n")
 
+
+    def test_normal_sync_does_not_emit_graft_deprecation_advice(self) -> None:
+        self.git("config", "advice.graftFileDeprecated", "true")
+        result = self.gb()
+        self.assertNotIn("hint:", result.stderr)
+
+    def test_restored_and_reused_branch_names_do_not_inherit_deleted_upstreams(self) -> None:
+        name = "amb/restore-reuse"
+        tip = self.gone_branch(name, squash=True)
+        self.gb()
+        recovery = f"refs/gb/pruned/{name}/{tip}"
+        self.git("branch", name, recovery)
+        self.gb()
+        self.assertEqual(self.git("rev-parse", name).stdout.strip(), tip)
+        self.assertEqual(self.git("for-each-ref", "--format=%(upstream)", f"refs/heads/{name}").stdout.strip(), "")
+        self.git("branch", "-D", name)
+        self.git("branch", name, "main")
+        self.assertEqual(self.git("for-each-ref", "--format=%(upstream)", f"refs/heads/{name}").stdout.strip(), "")
+
+    def test_switch_preserves_ignored_file_collisions(self) -> None:
+        base = self.git("rev-parse", "main").stdout.strip()
+        target = self.commit_file("generated.bin", b"tracked target bytes")
+        self.git("push", "origin", "main")
+        self.git("switch", "-c", "working", base)
+        working = self.commit_file(".gitignore", b"generated.bin\n")
+        ignored = self.repo / "generated.bin"
+        ignored.write_bytes(b"precious ignored bytes\0\xff")
+        for target_kind in ("local", "remote"):
+            with self.subTest(target_kind=target_kind):
+                if target_kind == "remote":
+                    self.git("branch", "-D", "main")
+                result = self.gb(check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(ignored.read_bytes(), b"precious ignored bytes\0\xff")
+                self.assertEqual(self.git("symbolic-ref", "--short", "HEAD").stdout.strip(), "working")
+                self.assertEqual(self.git("rev-parse", "working").stdout.strip(), working)
+                self.assertEqual(self.git("rev-parse", "origin/main").stdout.strip(), target)
+
+    def test_fast_forward_preserves_ignored_file_collisions(self) -> None:
+        base = self.commit_file(".gitignore", b"generated.bin\n")
+        self.git("push", "origin", "main")
+        ignored = self.repo / "generated.bin"
+        ignored.write_bytes(b"remote tracked bytes")
+        self.git("add", "-f", "generated.bin")
+        self.git("commit", "-m", "track previously ignored output")
+        remote_tip = self.git("rev-parse", "HEAD").stdout.strip()
+        self.git("push", "origin", "main")
+        self.git("reset", "--hard", base)
+        ignored.write_bytes(b"local ignored bytes\0\xff")
+        result = self.gb(check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(ignored.read_bytes(), b"local ignored bytes\0\xff")
+        self.assertEqual(self.git("rev-parse", "main").stdout.strip(), base)
+        self.assertEqual(self.git("rev-parse", "origin/main").stdout.strip(), remote_tip)
+
+    def test_remote_branch_switch_can_fetch_missing_partial_clone_blobs(self) -> None:
+        self.git("switch", "-c", "amb/lazy")
+        tip = self.commit_file("lazy.bin", b"lazy blob\0\xff")
+        self.git("push", "origin", "amb/lazy")
+        self.git("switch", "main")
+        run("git", "config", "uploadpack.allowFilter", "true", cwd=self.remote)
+        partial = self.root / "partial"
+        run("git", "clone", "--filter=blob:none", "--no-checkout", self.remote.as_uri(), str(partial), cwd=self.root)
+        run("git", "switch", "main", cwd=partial)
+        missing = run("git", "rev-list", "--objects", "--missing=print", "origin/amb/lazy", cwd=partial)
+        self.assertIn("?", missing.stdout)
+        result = run(sys.executable, str(GB), "amb/lazy", cwd=partial, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((partial / "lazy.bin").read_bytes(), b"lazy blob\0\xff")
+        self.assertEqual(run("git", "rev-parse", "HEAD", cwd=partial).stdout.strip(), tip)
+
     def test_normal_merge_is_pruned_with_permanent_recovery(self) -> None:
         name = "amb/merged"
         tip = self.gone_branch(name)
@@ -515,10 +586,21 @@ class GbCleanupTest(unittest.TestCase):
 
         result = self.gb(check=False)
 
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 0, result.stderr)
         saved = self.git("rev-parse", "--verify", recovery, check=False)
         self.assertEqual(saved.returncode, 0, "fetch must not delete recovery refs")
         self.assertEqual(saved.stdout.strip(), tip)
+
+    def test_fetch_accepts_missing_or_additional_nonbranch_mappings(self) -> None:
+        self.git("config", "--unset-all", "remote.origin.fetch")
+        for specification in (None, "+refs/tags/*:refs/tags/*", "+refs/notes/*:refs/notes/*"):
+            with self.subTest(specification=specification):
+                if specification:
+                    self.git("config", "--replace-all", "remote.origin.fetch", specification)
+                result = self.gb(check=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.git("rev-parse", "origin/main").stdout,
+                                 self.git("rev-parse", "main").stdout)
 
     def test_virtual_history_cannot_make_unmerged_work_prunable(self) -> None:
         name = "amb/replacement"
@@ -562,13 +644,17 @@ class GbCleanupTest(unittest.TestCase):
 
     def test_shallow_squash_history_is_kept(self) -> None:
         name = "amb/shallow"
+        for index in range(4):
+            self.commit_file("older.txt", str(index).encode())
         tip = self.gone_branch(name, squash=True)
         self.git("push", "origin", name)
         shallow = self.root / "shallow"
-        run("git", "clone", "--depth=1", "--no-single-branch", self.remote.as_uri(),
+        run("git", "clone", "--depth=3", "--no-single-branch", self.remote.as_uri(),
             str(shallow), cwd=self.root)
         run("git", "branch", "--track", name, f"origin/{name}", cwd=shallow)
         self.git("push", "origin", "--delete", name)
+        self.assertEqual(run("git", "rev-parse", "--is-shallow-repository", cwd=shallow).stdout.strip(), "true")
+        run("git", "merge-base", name, "main", cwd=shallow)
 
         run(sys.executable, str(GB), cwd=shallow)
 
@@ -635,6 +721,21 @@ class GbCleanupTest(unittest.TestCase):
         self.assert_branch_kept(name, tip)
         self.assertTrue((state / "rebase-merge" / "head-name").exists())
 
+    def test_stacked_branch_queued_by_rebase_update_refs_is_preserved(self) -> None:
+        name = "amb/queued"
+        tip = self.gone_branch(name, squash=True)
+        base = self.git("merge-base", name, "main").stdout.strip()
+        linked = self.root / "stacked-rebase"
+        self.git("branch", "amb/rebase-tip", name)
+        self.git("worktree", "add", str(linked), "amb/rebase-tip")
+        result = run("git", "rebase", "--update-refs", "--onto", "main", base,
+                     cwd=linked, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        state = Path(run("git", "rev-parse", "--absolute-git-dir", cwd=linked).stdout.strip())
+        self.assertIn(f"refs/heads/{name}", (state / "rebase-merge/update-refs").read_text())
+        self.gb()
+        self.assert_branch_kept(name, tip)
+
     def test_registered_worktrees_and_all_local_files_are_preserved(self) -> None:
         tip = self.gone_branch("amb/eligible", squash=True)
         protected = []
@@ -677,6 +778,10 @@ class GbCleanupTest(unittest.TestCase):
     def test_ignored_submodule_changes_cannot_be_hidden_from_merge_evidence(self) -> None:
         old_link = self.git("rev-parse", "HEAD").stdout.strip()
         self.git("update-index", "--add", "--cacheinfo", f"160000,{old_link},module")
+        self.git("config", "-f", ".gitmodules", "submodule.module.path", "module")
+        self.git("config", "-f", ".gitmodules", "submodule.module.url", "../module.git")
+        self.git("config", "-f", ".gitmodules", "submodule.module.ignore", "all")
+        self.git("add", ".gitmodules")
         self.git("commit", "-m", "record submodule")
         self.git("push", "origin", "main")
         name = "amb/submodule-work"
@@ -686,7 +791,6 @@ class GbCleanupTest(unittest.TestCase):
         self.git("commit", "-m", "advance submodule locally")
         tip = self.git("rev-parse", "HEAD").stdout.strip()
         self.git("switch", "main")
-        self.git("config", "diff.ignoreSubmodules", "all")
 
         self.gb()
 
