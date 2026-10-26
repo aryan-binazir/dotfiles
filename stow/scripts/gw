@@ -22,10 +22,6 @@ def die(message: str, code: int = 1) -> None:
     raise SystemExit(code)
 
 
-def run(command: list[str], *, cwd: Path) -> int:
-    return subprocess.run(command, cwd=cwd, stdout=sys.stderr).returncode
-
-
 def git(
     args: list[str],
     *,
@@ -59,31 +55,17 @@ def is_linked_worktree(root: Path) -> bool:
 
 
 def existing_worktree(root: Path, branch_ref: str) -> Path | None:
-    result = git(["worktree", "list", "--porcelain"], cwd=root)
-    if result.returncode != 0:
-        die(result.stderr.strip() or "git worktree list failed", result.returncode)
-
     branch_name = branch_ref.removeprefix("refs/heads/")
-    for record in result.stdout.split("\n\n"):
-        path: Path | None = None
-        branch: str | None = None
-        for line in record.splitlines():
-            if line.startswith("worktree "):
-                path = Path(line.removeprefix("worktree "))
-            elif line.startswith("branch "):
-                branch = line.removeprefix("branch ")
-        if branch != branch_ref:
+    for record in worktree_records(root):
+        if record.get("branch") != branch_ref:
             continue
-        if path is not None and path.is_dir():
+        path = Path(record["worktree"])
+        if path.is_dir():
             return path
-        status = run(["git", "worktree", "prune"], cwd=root)
-        if status != 0:
-            die(
-                f"worktree for {branch_name} is missing ({path}); "
-                "run: git worktree prune",
-                status,
-            )
-        return None
+        die(
+            f"registered worktree for {branch_name} is missing ({path}); "
+            "restore it or explicitly run git worktree prune",
+        )
     return None
 
 
@@ -248,11 +230,10 @@ def main() -> int:
     if removing:
         return remove_worktree(root, name)
 
-    status = run(["gb"], cwd=root)
-    if status != 0:
-        return status
-
-    status = run(["git", "worktree", "prune"], cwd=root)
+    status = subprocess.run(
+        ["gb"], cwd=root, stdout=sys.stderr,
+        env=os.environ | {"GW_PRESERVE_BRANCH": branch},
+    ).returncode
     if status != 0:
         return status
 
@@ -277,7 +258,7 @@ def main() -> int:
     else:
         command = ["git", "worktree", "add", "-b", branch, str(worktree), "main"]
 
-    status = run(command, cwd=root)
+    status = subprocess.run(command, cwd=root, stdout=sys.stderr).returncode
     if status != 0:
         return status
 
