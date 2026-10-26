@@ -3,7 +3,7 @@ name = "Last workspace"
 version = "0.1.0"
 min_herdr_version = "0.8.0"
 description = "Toggle back to the previously focused workspace, like tmux's last-session"
-platforms = ["linux"]
+platforms = ["linux", "macos"]
 
 # Herdr's built-in last_pane also crosses tabs; this only tracks workspaces.
 [[events]]

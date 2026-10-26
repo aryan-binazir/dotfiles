@@ -8,7 +8,7 @@ only, ask before replacing. Keep parent directories real and runtime state outsi
 src="$HOME/repos/dotfiles/stow/arch-linux/herdr/.config/herdr"
 mkdir -p "$HOME/.config/herdr/plugins"
 ln -s "$src/config.toml" "$HOME/.config/herdr/config.toml"
-# Linux only:
+# Linux/macOS:
 ln -s "$src/plugins/last-workspace" "$HOME/.config/herdr/plugins/last-workspace"
 herdr plugin link "$HOME/.config/herdr/plugins/last-workspace"
 # Linux/macOS; requires Git + Rust/Cargo:
@@ -16,8 +16,9 @@ herdr plugin install yxhta/herdr-agents-picker --ref 5904754d78899ab7bb254eb0717
 ```
 
 Plugins require registration on **each machine**, separately from config linking:
-- `ar.last-workspace`: bundled Bash, Linux-only. `prefix+Shift+L` toggles the last
-  workspace; visit two workspaces after linking to establish history.
+- `ar.last-workspace`: bundled Bash, Linux/macOS. `prefix+Shift+L` toggles the last
+  workspace; visit two workspaces after linking to establish history. Mac setup
+  is unverified.
 - `yxhta.agents-picker`: external Rust. `prefix+a` opens list + preview;
   `j/k`, Enter, `/`, Esc navigate, open, search, cancel. Mac setup is unverified.
 
