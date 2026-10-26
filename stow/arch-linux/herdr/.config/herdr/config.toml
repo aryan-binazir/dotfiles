@@ -38,9 +38,9 @@ remove_worktree = "prefix+shift+d"
 copy_mode = "prefix+["
 
 # Panes
-split_horizontal = ["prefix+percent", "alt+enter"]
-split_vertical = ['prefix+"', "alt+shift+enter"]
-close_pane = ["prefix+x", "alt+esc"]
+split_horizontal = ['prefix+"', "alt+enter"]
+split_vertical = ["prefix+percent", "alt+shift+enter"]
+close_pane = "alt+esc"
 zoom = "prefix+z"
 # Capital L returns to the last focused space, bound below via the
 # plugins/last-workspace plugin (built-in last_pane also crosses tabs)
@@ -103,6 +103,12 @@ key = "prefix+a"
 type = "plugin_action"
 command = "yxhta.agents-picker.open"
 description = "agents picker"
+
+[[keys.command]]
+key = "prefix+x"
+type = "plugin_action"
+command = "ar.confirm-close.open"
+description = "confirm close pane"
 
 [[keys.command]]
 key = "prefix+f"

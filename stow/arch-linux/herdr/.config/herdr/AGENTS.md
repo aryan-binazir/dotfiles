@@ -7,6 +7,8 @@ only, ask before replacing. Keep parent directories real and runtime state outsi
 ```sh
 src="$HOME/repos/dotfiles/stow/arch-linux/herdr/.config/herdr"
 mkdir -p "$HOME/.config/herdr/plugins"
+ln -s "$src/plugins/confirm-close" "$HOME/.config/herdr/plugins/confirm-close"
+herdr plugin link "$HOME/.config/herdr/plugins/confirm-close"
 ln -s "$src/config.toml" "$HOME/.config/herdr/config.toml"
 # Linux/macOS:
 ln -s "$src/plugins/last-workspace" "$HOME/.config/herdr/plugins/last-workspace"
@@ -16,6 +18,8 @@ herdr plugin install yxhta/herdr-agents-picker --ref 5904754d78899ab7bb254eb0717
 ```
 
 Plugins require registration on **each machine**, separately from config linking:
+- `ar.confirm-close`: bundled Bash, Linux/macOS, Herdr 0.9.1+. Link/register before
+  loading the config. `prefix+x` opens an 18×4-cell **Close pane** confirmation.
 - `ar.last-workspace`: bundled Bash, Linux/macOS. `prefix+Shift+L` toggles the last
   workspace; visit two workspaces after linking to establish history. Mac setup
   is unverified.
@@ -30,6 +34,13 @@ Adding plugins: review code/hooks/platforms. Put local plugins under `plugins/`
 and link their permanent paths; pin external installs with `--ref`. Record setup
 here; bind qualified action IDs via `[[keys.command]]`, `type = "plugin_action"`.
 Avoid Shift+digit/punctuation conflicts.
+
+The close plugin resolves `scripts/confirm-close.sh` beside its repo source;
+no separate helper symlink or PATH entry is needed. Existing helper links may stay.
+`prefix+x` asks for `y/Y`; any other key or EOF cancels. Alt+Esc remains immediate.
+Close errors stay visible until dismissed; protected linked-worktree group closes
+are refused, so use Herdr’s normal workspace-close flow for those. Native Mac
+behavior still needs verification.
 
 `prefix+f` runs `stow/scripts/hm` (repo-relative), not a plugin. Link to
 `~/.local/bin/hm` if absent; requires PATH, Bash, fzf, jq, compatible find/realpath.
