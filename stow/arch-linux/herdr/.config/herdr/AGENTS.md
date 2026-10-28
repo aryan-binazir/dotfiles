@@ -59,7 +59,8 @@ Prefix: Ctrl+B. Docs-only changes: check paths/diff; no live reload.
 Herdr ships and manages the Pi extension. Use its installer; never vendor,
 copy between machines, or hand-edit `herdr-agent-state.ts`.
 
-1. Require Herdr 0.9.1 or newer and Pi installed. Herdr 0.9.1 bundles v9.
+1. Check `herdr --version` and `pi --version`. Require Herdr 0.9.1+ and
+   Pi 0.80.4+ for the `agent_settled` event. Herdr 0.9.1 bundles v9.
    Locate Pi's agent directory, normally `~/.pi/agent`, or
    `PI_CODING_AGENT_DIR` when set. Back up its `settings.json` and
    `extensions/herdr-agent-state.ts` outside `extensions/`, so Pi cannot
