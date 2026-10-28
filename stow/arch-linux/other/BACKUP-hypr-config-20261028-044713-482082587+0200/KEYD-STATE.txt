@@ -1,0 +1,13 @@
+Snapshot time: 2026-10-28T04:47:13+02:00
+
+keyd 2.6.0-5
+
+Id=keyd.service
+LoadState=loaded
+ActiveState=active
+UnitFileState=enabled
+
+Id=udevmon.service
+LoadState=loaded
+ActiveState=inactive
+UnitFileState=disabled
