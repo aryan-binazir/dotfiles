@@ -20,4 +20,4 @@ For docs-only changes, check referenced paths and the diff; no build or dev serv
 
 ## Maintaining these instructions
 
-Prune before adding. Prefer existing docs and conditional pointers. Keep only non-obvious repository constraints; omit globals and facts available in code, lint or tests. Keep this file under 700 `o200k_base` tokens.
+Prune before adding. Code-golf additions using the shortest unambiguous wording. Prefer existing docs and conditional pointers. Keep only non-obvious repository constraints; omit globals and facts available in code, lint or tests. Keep this file under 700 `o200k_base` tokens.
