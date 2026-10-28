@@ -96,8 +96,7 @@ type = "plugin_action"
 command = "ar.last-workspace.toggle"
 description = "go to last space"
 
-# Install on each machine (requires Cargo):
-#   herdr plugin install yxhta/herdr-agents-picker --ref 5904754d78899ab7bb254eb0717195603c901026
+# Install the pinned fork on each machine; see AGENTS.md.
 [[keys.command]]
 key = "prefix+a"
 type = "plugin_action"

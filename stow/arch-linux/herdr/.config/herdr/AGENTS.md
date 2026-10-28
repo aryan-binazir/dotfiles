@@ -14,7 +14,7 @@ ln -s "$src/config.toml" "$HOME/.config/herdr/config.toml"
 ln -s "$src/plugins/last-workspace" "$HOME/.config/herdr/plugins/last-workspace"
 herdr plugin link "$HOME/.config/herdr/plugins/last-workspace"
 # Linux/macOS; requires Git + Rust/Cargo:
-herdr plugin install yxhta/herdr-agents-picker --ref 5904754d78899ab7bb254eb0717195603c901026
+herdr plugin install aryan-binazir/herdr-agents-picker --ref 7fc8e5149cf45b6b21f82975ce901de48a9addab
 ```
 
 Plugins require registration on **each machine**, separately from config linking:
@@ -23,12 +23,18 @@ Plugins require registration on **each machine**, separately from config linking
 - `ar.last-workspace`: bundled Bash, Linux/macOS. `prefix+Shift+L` toggles the last
   workspace; visit two workspaces after linking to establish history. Mac setup
   is unverified.
-- `yxhta.agents-picker`: external Rust. `prefix+a` opens list + preview;
-  `j/k`, Enter, `/`, Esc navigate, open, search, cancel. Mac setup is unverified.
+- `yxhta.agents-picker`: our Rust fork, retaining the upstream ID for existing
+  bindings. `prefix+a` opens a full-width thread list. Herdr supplies the only
+  border and `Agents` title. The manifest versions its **95% × 90%** size.
+  `1`–`9`, then `0`, open the first ten visible rows immediately. Scrolling and
+  refreshes change those labels. `/` starts search, where digits are text;
+  `j/k`, Enter and Esc retain navigation, open and cancel behavior.
 
-Picker size: local **95% × 90%** override. Find its `manifest_path` in
-`~/.config/herdr/plugins.json`; set the `picker` pane's width/height there.
-Not versioned; updates/reinstalls may reset it.
+Before migrating an existing picker, inspect `herdr plugin list` and preserve
+local changes. Uninstall only `yxhta.agents-picker`, then run the pinned fork
+install above. Keep local plugin links on permanent checkouts, never worktrees.
+After fork updates, advance this pin only to the reviewed commit and reinstall
+on each machine. No local manifest sizing override is needed.
 
 Adding plugins: review code/hooks/platforms. Put local plugins under `plugins/`
 and link their permanent paths; pin external installs with `--ref`. Record setup
@@ -49,3 +55,27 @@ Verify links, `herdr config check`, `herdr plugin list`, and
 `herdr plugin action list --plugin <id>`. Reload a running server only when
 requested: `herdr server reload-config` / `prefix+q`; smoke-test bindings.
 Prefix: Ctrl+B. Docs-only changes: check paths/diff; no live reload.
+
+## Pi status integration
+
+Herdr ships and manages the Pi extension. Use its installer; never vendor,
+copy between machines, or hand-edit `herdr-agent-state.ts`.
+
+1. Check `herdr --version`. Herdr 0.9.1 bundles integration v9; newer Herdr
+   releases may bundle a newer integration. Back up this machine's
+   `~/.pi/agent/extensions/herdr-agent-state.ts` and `~/.pi/agent/settings.json`
+   if present. Pi must be installed first.
+2. Run `herdr integration install pi`, then `herdr integration status`.
+   Require `pi: current (v9)` on Herdr 0.9.1, or the current newer version.
+   If Herdr supplies an older version, update Herdr before proceeding.
+3. Inspect Pi's global and project settings for a negative extension entry
+   matching this machine's `herdr-agent-state.ts`. Remove only that exclusion.
+   Keep unrelated settings and other disabled extensions. Pi discovers the
+   installed file automatically; a current version alone does not mean enabled.
+4. Run `/reload` in existing Pi sessions or restart Pi. Recheck settings after
+   reload. Run Pi inside Herdr and verify a turn shows working, then idle/done
+   in `herdr agent list` and the picker. Do not claim live verification from
+   installer output alone. Use an owned test session, not another agent's pane.
+
+Run installation and enablement separately on each machine; never copy absolute
+paths from another environment. Native Mac setup is unverified.
