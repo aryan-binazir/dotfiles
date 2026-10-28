@@ -96,7 +96,7 @@ type = "plugin_action"
 command = "ar.last-workspace.toggle"
 description = "go to last space"
 
-# Install the pinned fork on each machine; see AGENTS.md.
+# Install per machine: stow/arch-linux/herdr/.config/herdr/AGENTS.md in dotfiles.
 [[keys.command]]
 key = "prefix+a"
 type = "plugin_action"

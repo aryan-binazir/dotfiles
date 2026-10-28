@@ -14,7 +14,7 @@ ln -s "$src/config.toml" "$HOME/.config/herdr/config.toml"
 ln -s "$src/plugins/last-workspace" "$HOME/.config/herdr/plugins/last-workspace"
 herdr plugin link "$HOME/.config/herdr/plugins/last-workspace"
 # Linux/macOS; requires Git + Rust/Cargo:
-herdr plugin install aryan-binazir/herdr-agents-picker --ref 7fc8e5149cf45b6b21f82975ce901de48a9addab
+herdr plugin install aryan-binazir/herdr-agents-picker --ref 93ee543f032716d231c83bbd36e46397074f1e67
 ```
 
 Plugins require registration on **each machine**, separately from config linking:
@@ -23,18 +23,16 @@ Plugins require registration on **each machine**, separately from config linking
 - `ar.last-workspace`: bundled Bash, Linux/macOS. `prefix+Shift+L` toggles the last
   workspace; visit two workspaces after linking to establish history. Mac setup
   is unverified.
-- `yxhta.agents-picker`: our Rust fork, retaining the upstream ID for existing
-  bindings. `prefix+a` opens a full-width thread list. Herdr supplies the only
-  border and `Agents` title. The manifest versions its **95% × 90%** size.
-  `1`–`9`, then `0`, open the first ten visible rows immediately. Scrolling and
-  refreshes change those labels. `/` starts search, where digits are text;
-  `j/k`, Enter and Esc retain navigation, open and cancel behavior.
+- `yxhta.agents-picker`: our Rust fork keeps the upstream ID and `prefix+a`
+  binding. See the fork README at the pinned commit for layout and keys.
+  Native macOS setup is unverified.
 
-Before migrating an existing picker, inspect `herdr plugin list` and preserve
-local changes. Uninstall only `yxhta.agents-picker`, then run the pinned fork
-install above. Keep local plugin links on permanent checkouts, never worktrees.
-After fork updates, advance this pin only to the reviewed commit and reinstall
-on each machine. No local manifest sizing override is needed.
+Before migrating, inspect `herdr plugin list` and back up local modifications
+outside the managed checkout. GitHub installs replace in place with rollback;
+run the pinned install directly. For a local link, first run
+`herdr plugin unlink yxhta.agents-picker`. Advance the pin only to a reviewed
+commit on the fork's `main`, then reinstall on each machine. The manifest owns
+popup sizing; local sizing overrides are unnecessary.
 
 Adding plugins: review code/hooks/platforms. Put local plugins under `plugins/`
 and link their permanent paths; pin external installs with `--ref`. Record setup
@@ -61,21 +59,23 @@ Prefix: Ctrl+B. Docs-only changes: check paths/diff; no live reload.
 Herdr ships and manages the Pi extension. Use its installer; never vendor,
 copy between machines, or hand-edit `herdr-agent-state.ts`.
 
-1. Check `herdr --version`. Herdr 0.9.1 bundles integration v9; newer Herdr
-   releases may bundle a newer integration. Back up this machine's
-   `~/.pi/agent/extensions/herdr-agent-state.ts` and `~/.pi/agent/settings.json`
-   if present. Pi must be installed first.
+1. Require Herdr 0.9.1 or newer and Pi installed. Herdr 0.9.1 bundles v9.
+   Locate Pi's agent directory, normally `~/.pi/agent`, or
+   `PI_CODING_AGENT_DIR` when set. Back up its `settings.json` and
+   `extensions/herdr-agent-state.ts` outside `extensions/`, so Pi cannot
+   auto-load the backup.
 2. Run `herdr integration install pi`, then `herdr integration status`.
-   Require `pi: current (v9)` on Herdr 0.9.1, or the current newer version.
-   If Herdr supplies an older version, update Herdr before proceeding.
-3. Inspect Pi's global and project settings for a negative extension entry
-   matching this machine's `herdr-agent-state.ts`. Remove only that exclusion.
-   Keep unrelated settings and other disabled extensions. Pi discovers the
-   installed file automatically; a current version alone does not mean enabled.
+   Require `pi: current (v9)` on Herdr 0.9.1, or a current version above v9
+   on newer Herdr. Installer success alone does not mean enabled.
+3. Inspect the agent directory's `settings.json` and project `.pi/settings.json`.
+   Remove only an exact `-<path>/herdr-agent-state.ts` exclusion for this
+   machine. Preserve other settings and exclusions. If a broader `!pattern`
+   excludes it, narrow that pattern while preserving exclusions for other
+   files. Pi discovers the installed extension automatically.
 4. Run `/reload` in existing Pi sessions or restart Pi. Recheck settings after
-   reload. Run Pi inside Herdr and verify a turn shows working, then idle/done
-   in `herdr agent list` and the picker. Do not claim live verification from
-   installer output alone. Use an owned test session, not another agent's pane.
+   reload. In an owned Pi session inside Herdr, verify a turn shows working,
+   then idle/done in `herdr agent list` and the picker. Installer output alone
+   is not live verification.
 
 Run installation and enablement separately on each machine; never copy absolute
 paths from another environment. Native Mac setup is unverified.
