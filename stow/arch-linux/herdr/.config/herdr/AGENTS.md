@@ -14,7 +14,7 @@ ln -s "$src/config.toml" "$HOME/.config/herdr/config.toml"
 ln -s "$src/plugins/last-workspace" "$HOME/.config/herdr/plugins/last-workspace"
 herdr plugin link "$HOME/.config/herdr/plugins/last-workspace"
 # Linux/macOS; requires Git + Rust/Cargo:
-herdr plugin install aryan-binazir/herdr-agents-picker --ref 93ee543f032716d231c83bbd36e46397074f1e67
+herdr plugin install aryan-binazir/herdr-agents-picker --ref 7114c986597da9aa9f96250418322f415d6b6926
 ```
 
 Plugins require registration on **each machine**, separately from config linking:
