@@ -21,7 +21,7 @@ class SyncSkillsTest(unittest.TestCase):
         self.skills = self.repo / "pstack/skills"
         self.target = self.root / "cc-config/skills/sym_linked"
         self.target.mkdir(parents=True)
-        for name in ("unslop", "statechart", "create-formal-verification-skill", "arena", "architect", "new-upstream-skill"):
+        for name in ("unslop", "statechart", "create-formal-verification-skill", "maintain-formal-verification-skill", "arena", "architect", "new-upstream-skill"):
             skill = self.skills / name
             skill.mkdir(parents=True)
             (skill / "SKILL.md").write_text(name)
@@ -32,12 +32,13 @@ class SyncSkillsTest(unittest.TestCase):
     def test_only_allowed_skills_are_selected(self) -> None:
         self.assertEqual(self.module.iter_pstack_skill_dirs(), [
             self.skills / "create-formal-verification-skill",
+            self.skills / "maintain-formal-verification-skill",
             self.skills / "statechart",
             self.skills / "unslop",
         ])
 
     def test_cleanup_removes_only_pstack_links_and_is_repeatable(self) -> None:
-        for name in ("unslop", "statechart", "create-formal-verification-skill", "arena", "new-upstream-skill", "missing-upstream-skill"):
+        for name in ("unslop", "statechart", "create-formal-verification-skill", "maintain-formal-verification-skill", "arena", "new-upstream-skill", "missing-upstream-skill"):
             (self.target / name).symlink_to(self.skills / name)
         other = self.root / "matt-pocock/architect"
         other.mkdir(parents=True)
@@ -46,8 +47,8 @@ class SyncSkillsTest(unittest.TestCase):
         (self.target / "local-skill").mkdir()
         self.module.remove_excluded_pstack_links()
         self.module.remove_excluded_pstack_links()
-        self.assertEqual({path.name for path in self.target.iterdir()}, {"unslop", "statechart", "create-formal-verification-skill", "architect", "notes", "local-skill"})
-        for name in ("unslop", "statechart", "create-formal-verification-skill"):
+        self.assertEqual({path.name for path in self.target.iterdir()}, {"unslop", "statechart", "create-formal-verification-skill", "maintain-formal-verification-skill", "architect", "notes", "local-skill"})
+        for name in ("unslop", "statechart", "create-formal-verification-skill", "maintain-formal-verification-skill"):
             self.assertEqual((self.target / name).readlink(), self.skills / name)
         self.assertEqual((self.target / "architect").readlink(), other)
         self.assertEqual((self.target / "notes").read_text(), "keep")

@@ -13,7 +13,12 @@ SKILLS_REPO = Path("~/repos/skills").expanduser()
 CURSOR_PLUGINS_REPO = Path("~/repos/cursor-plugins").expanduser()
 CURSOR_PLUGINS_URL = "https://github.com/cursor/plugins.git"
 PSTACK_SKILLS_PATH = Path("pstack/skills")
-PSTACK_ALLOWED_SKILL_NAMES = {"unslop", "statechart", "create-formal-verification-skill"}
+PSTACK_ALLOWED_SKILL_NAMES = {
+    "unslop",
+    "statechart",
+    "create-formal-verification-skill",
+    "maintain-formal-verification-skill",
+}
 HUMANLAYER_SKILLS_REPO = Path("~/repos/humanlayer-skills").expanduser()
 HUMANLAYER_SKILLS_URL = "https://github.com/humanlayer/skills.git"
 SHOW_ME_PATH = Path("plugins/show-me/skills/show-me")
