@@ -38,6 +38,3 @@ id_ecdsa*
 *.asc
 # Agent scratch space
 _scratch/
-# Herdr runtime plugin state (installs land here via the plugins symlink)
-stow/arch-linux/herdr/.config/herdr/plugins/github/
-stow/arch-linux/herdr/.config/herdr/plugins/config/
