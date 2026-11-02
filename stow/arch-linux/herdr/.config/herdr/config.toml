@@ -116,6 +116,30 @@ command = "hm"
 width = "80%"
 height = "80%"
 
+[[keys.command]]
+key = "prefix+e"
+type = "plugin_action"
+command = "chmarax.herdr-nvim.toggle"
+description = "nvim sidebar"
+
+[[keys.command]]
+key = "prefix+shift+e"
+type = "plugin_action"
+command = "chmarax.herdr-nvim.pick-file"
+description = "open file from agent output"
+
+[[keys.command]]
+key = "prefix+shift+h"
+type = "plugin_action"
+command = "jhochenbaum.hunkdiff.review"
+description = "hunk review changes"
+
+[[keys.command]]
+key = "prefix+shift+r"
+type = "plugin_action"
+command = "jhochenbaum.hunkdiff.send-review"
+description = "send hunk review to agent"
+
 [ui]
 accent = "blue"
 

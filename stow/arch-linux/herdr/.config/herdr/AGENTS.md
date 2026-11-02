@@ -15,6 +15,10 @@ ln -s "$src/plugins/last-workspace" "$HOME/.config/herdr/plugins/last-workspace"
 herdr plugin link "$HOME/.config/herdr/plugins/last-workspace"
 # Linux/macOS; requires Git + Rust/Cargo:
 herdr plugin install aryan-binazir/herdr-agents-picker --ref ea302e836661b05ca89aeeb9ea8fa4f097dc0d20
+# Requires Node 22.12+:
+herdr plugin install jhochenbaum/herdr-hunk-diff --ref ac5eef7cec6a65fbf8f0c9bbd61b4383489beba5
+# Requires nvim 0.10+; pair with lua/plugins/herdr-nvim.lua in the nvim config:
+herdr plugin install ChmaraX/herdr-nvim --ref 26cd43e38126be8012b59f95fd41ef33574d0d08
 ```
 
 Plugins require registration on **each machine**, separately from config linking:
@@ -26,6 +30,11 @@ Plugins require registration on **each machine**, separately from config linking
 - `yxhta.agents-picker`: our Rust fork keeps the upstream ID and `prefix+a`
   binding. See the fork README at the pinned commit for layout and keys.
   Native macOS setup is unverified.
+- `jhochenbaum.hunkdiff`: Node, Linux/macOS. `prefix+Shift+H` opens a hunk review;
+  `prefix+Shift+R` sends its comments to the agent. Do not run its `setup-keys`
+  action: it writes into this config.
+- `chmarax.herdr-nvim`: Rust/Bash, Linux/macOS. `prefix+e` toggles the per-tab nvim
+  sidebar; `prefix+Shift+E` picks a file the agent touched.
 
 Before migrating, inspect `herdr plugin list` and back up local modifications
 outside the managed checkout. GitHub installs replace in place with rollback;
