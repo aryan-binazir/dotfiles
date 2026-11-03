@@ -37,6 +37,10 @@ remove_worktree = "prefix+shift+d"
 # Copy mode
 copy_mode = "prefix+["
 
+# Agents, in the ar.triage plugin's order
+next_agent = "prefix+]"
+previous_agent = "prefix+\\"
+
 # Panes
 split_horizontal = ['prefix+"', "alt+enter"]
 split_vertical = ["prefix+percent", "alt+shift+enter"]
@@ -100,8 +104,14 @@ description = "go to last space"
 [[keys.command]]
 key = "prefix+a"
 type = "plugin_action"
-command = "yxhta.agents-picker.open"
-description = "agents picker"
+command = "ar.triage.open"
+description = "agent triage picker"
+
+[[keys.command]]
+key = "prefix+w"
+type = "plugin_action"
+command = "ar.triage.next"
+description = "next agent that needs you"
 
 [[keys.command]]
 key = "prefix+x"
@@ -169,5 +179,17 @@ window_title = "{hostname}: {workspace}"
 show_agent_labels_on_pane_borders = false
 
 agent_panel_sort = "priority"
+
+# Default rows plus the ar.triage plugin's pin/unread/snoozed/settled label
+[ui.sidebar.agents]
+rows = [
+  ["state_icon", "machine", "workspace", "tab"],
+  ["agent", { token = "$triage", rules = [
+    { starts_with = "settled", dim = true },
+    { starts_with = "snoozed", dim = true },
+    { contains = "unread", bold = true },
+    { contains = "woke", bold = true },
+  ] }],
+]
 [ui.toast]
 delivery = "terminal"
