@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "source": "pi",
+  "provider": "openai-codex",
+  "model": "gpt-6-luna",
+  "profile": "low"
+}

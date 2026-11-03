@@ -63,6 +63,55 @@ Verify links, `herdr config check`, `herdr plugin list`, and
 requested: `herdr server reload-config` / `prefix+q`; smoke-test bindings.
 Prefix: Ctrl+B. Docs-only changes: check paths/diff; no live reload.
 
+## Smart Rename
+
+Linux/macOS: require Bun 1.2.23+ on the running server's PATH and Herdr 0.7.5+.
+Install Bun with the machine's tool manager. Use `pi` and `/login` to connect
+`openai-codex` on each machine; keep authentication outside dotfiles.
+
+```sh
+herdr plugin install iurysza/herdr-tab-smart-rename --ref v0.6.6 --yes
+herdr integration status
+# If Pi integration is missing:
+herdr integration install pi
+```
+
+Inspect `herdr plugin list`; if `kryptamine/herdr-auto-title` is installed, run
+`herdr plugin uninstall <its-listed-id>`. Smart Rename alone manages automatic titles.
+
+Track only `model-selection.json` and `naming-prompt.md` in
+`plugins/config/tab-smart-rename/`. The selection uses Pi's Luna model with low
+thinking. The prompt requires two Title Case words, at most 16 characters total.
+Keep installed code, credentials, logs, and runtime state outside the checkout.
+
+On every machine, create and verify the **directory symlink**, not file copies
+or individual file links: model selection is saved by atomic replacement.
+Inspect an existing destination and preserve its contents outside dotfiles before
+replacing it. Keep the `plugins` and `config` parents real.
+
+```sh
+src="$HOME/repos/dotfiles/stow/arch-linux/herdr/.config/herdr"
+dst="$HOME/.config/herdr/plugins/config/tab-smart-rename"
+mkdir -p "$(dirname "$dst")"
+# Once the destination is absent:
+ln -s "$src/plugins/config/tab-smart-rename" "$dst"
+test -L "$dst" || exit 1
+for file in model-selection.json naming-prompt.md; do
+  test "$(realpath "$dst/$file")" = "$(realpath "$src/plugins/config/tab-smart-rename/$file")" || exit 1
+done
+herdr plugin action invoke check-ai --plugin tab-smart-rename
+herdr plugin action invoke start --plugin tab-smart-rename
+herdr plugin action invoke status --plugin tab-smart-rename
+herdr server reload-config
+herdr plugin log list --plugin tab-smart-rename --limit 10
+```
+
+Require completed action logs with exit code 0, the selected model in `check-ai`,
+and a running worker in `status`; dispatch success alone is insufficient.
+`check-ai` validates configuration without a model request. Preserve manual names;
+avoid `rename-all` and resets. Never stop the Herdr server or its sessions.
+Native macOS setup is unverified.
+
 ## Pi status integration
 
 Herdr ships and manages the Pi extension. Use its installer; never vendor,
