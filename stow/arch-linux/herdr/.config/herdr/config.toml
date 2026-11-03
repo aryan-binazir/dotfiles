@@ -184,7 +184,13 @@ agent_panel_sort = "priority"
 [ui.sidebar.agents]
 rows = [
   ["state_icon", "machine", "workspace", "tab"],
-  ["agent", { token = "$triage", rules = [
+  ["agent", { token = "state_text", rules = [
+    # T3 Code's status colors (Working, Completed, Pending Approval)
+    { equals = "working", fg = "#7dd3fc", bold = true },
+    { equals = "done", fg = "#6ee7b7", bold = true },
+    { equals = "blocked", fg = "#fcd34d", bold = true },
+    { equals = "idle", dim = true },
+  ] }, { token = "$triage", rules = [
     { starts_with = "settled", dim = true },
     { starts_with = "snoozed", dim = true },
     { contains = "unread", bold = true },
