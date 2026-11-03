@@ -2,6 +2,8 @@ alias acc='claude --permission-mode auto'
 alias acco='acc --model claude-opus-5 --effort high'
 alias accf='acc --model claude-fable-5 --effort high'
 alias accs='acc --model claude-sonnet-5 --effort high'
+# Herdr only learns Codex session ids when Codex runs without its shared app-server.
+alias codex='codex --no-daemon'
 alias acd='codex --sandbox workspace-write --ask-for-approval on-request -c approvals_reviewer=auto_review -c sandbox_workspace_write.network_access=true'
 alias acds='acd --model gpt-5.6-sol -c model_reasoning_effort=high'
 alias acdt='acd --model gpt-5.6-terra -c model_reasoning_effort=high'

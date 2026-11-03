@@ -31,7 +31,9 @@ Plugins require registration on **each machine**, separately from config linking
   `prefix+a` opens it; `prefix+w` jumps to the next blocked, then done/unread
   agent; `prefix+]`/`prefix+\` (core `next_agent`/`previous_agent`) follow its
   order. It owns the Agents view; `[ui.sidebar.agents]` shows its `$triage`
-  token. Picker keys and rules: the repo README. Native macOS setup is unverified.
+  token. Picker keys and rules: the repo README. Codex threads close and reopen only
+  when Codex runs without its shared app-server; the shell rc aliases `codex` to
+  `codex --no-daemon` for that. Native macOS setup is unverified.
 - `jhochenbaum.hunkdiff`: Node, Linux/macOS. `prefix+Shift+H` opens a hunk review;
   `prefix+Shift+R` sends its comments to the agent. Do not run its `setup-keys`
   action: it writes into this config.
