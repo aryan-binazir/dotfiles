@@ -180,7 +180,7 @@ show_agent_labels_on_pane_borders = false
 
 agent_panel_sort = "priority"
 
-# Default rows plus the ar.triage plugin's pin/unread/snoozed/settled label
+# Default rows plus the ar.triage plugin's pin/unread/woke label; it hides parked agents
 [ui.sidebar.agents]
 rows = [
   ["state_icon", "machine", "workspace", "tab"],
@@ -191,8 +191,6 @@ rows = [
     { equals = "blocked", fg = "#fcd34d", bold = true },
     { equals = "idle", dim = true },
   ] }, { token = "$triage", rules = [
-    { starts_with = "settled", dim = true },
-    { starts_with = "snoozed", dim = true },
     { contains = "unread", bold = true },
     { contains = "woke", bold = true },
   ] }],
