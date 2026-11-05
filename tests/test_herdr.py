@@ -65,11 +65,11 @@ class ConfirmCloseTests(unittest.TestCase):
         }])
 
     def test_prompt_is_only_the_tmux_style_question_with_no_cursor(self):
-        result = self.run_helper("n")
-        self.assertIn("\033[?25l", result.stdout)
-        self.assertIn("\033[?25h", result.stdout)
-        visible = result.stdout.replace("\033[?25l", "").replace("\033[?25h", "")
-        self.assertEqual(visible.strip(), "Kill? (y/n)")
+        # Hiding comes first; nothing after the prompt moves or re-shows the cursor.
+        for answer in ("n", "y", ""):
+            with self.subTest(answer=answer):
+                result = self.run_helper(answer)
+                self.assertEqual(result.stdout, "\033[?25l Kill? (y/n) ")
 
     def test_other_keys_and_eof_cancel_without_closing(self):
         for answer in ("n", "N", "\n", "\x1b", "q", "\\", ""):

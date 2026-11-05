@@ -7,11 +7,10 @@ if [[ -z ${HERDR_ACTIVE_PANE_ID:-} || -z ${HERDR_SOCKET_PATH:-} ]]; then
 fi
 
 pane=$HERDR_ACTIVE_PANE_ID
-trap 'printf "\033[?25h"' EXIT
+# The popup terminal is discarded on exit, so the cursor stays hidden throughout.
 printf '\033[?25l Kill? (y/n) '
 answer=
 IFS= read -r -s -n 1 answer || exit 0
-printf '\n'
 [[ $answer == y || $answer == Y ]] || exit 0
 if error=$("${HERDR_BIN_PATH:-herdr}" pane close "$pane" 2>&1); then
     exit 0
