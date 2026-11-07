@@ -1,0 +1,15 @@
+Captured: 2026-11-07T20:32:34.702788+02:00
+
+$ pacman -Q keyd
+keyd 2.6.0-5
+
+$ systemctl show keyd.service udevmon.service -p Id -p LoadState -p ActiveState -p UnitFileState
+Id=keyd.service
+LoadState=loaded
+ActiveState=active
+UnitFileState=enabled
+
+Id=udevmon.service
+LoadState=loaded
+ActiveState=inactive
+UnitFileState=disabled
