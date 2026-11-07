@@ -53,6 +53,46 @@ class SyncSkillsTest(unittest.TestCase):
         self.assertEqual((self.target / "architect").readlink(), other)
         self.assertEqual((self.target / "notes").read_text(), "keep")
 
+    def test_tstack_sync_links_only_selected_skills_repeatably(self) -> None:
+        tstack = self.root / "tstack"
+        for name in ("council", "modernize", "takeover", "full-send", "future-skill"):
+            skill = tstack / "skills" / name
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(name)
+        sources = [
+            tstack / source.relative_to(self.module.TSTACK_SKILLS_REPO)
+            for source in self.module.SOURCE_SKILLS
+            if source.is_relative_to(self.module.TSTACK_SKILLS_REPO)
+        ]
+        hunk = self.root / "hunk-review"
+        hunk.mkdir()
+        hunk_skill = hunk / "SKILL.md"
+        hunk_skill.write_text("hunk")
+        app = self.root / "app"
+        app.mkdir()
+
+        with patch.multiple(
+            self.module,
+            SOURCE_DIRS=[],
+            SOURCE_SKILLS=sources,
+            CC_CONFIG_SKILLS_DIR=self.target.parent,
+            APP_SKILL_DIRS=[("test", app, app / "skills")],
+        ), patch.object(self.module.subprocess, "run") as run:
+            run.return_value.stdout = str(hunk_skill)
+            for _ in range(2):
+                self.module.symlink_skills()
+                self.module.sync_app_skill_dirs()
+
+        selected = {"council", "modernize", "takeover"}
+        self.assertEqual({source.name for source in sources}, selected)
+        expected = selected | self.module.PSTACK_ALLOWED_SKILL_NAMES | {"hunk-review"}
+        self.assertEqual({path.name for path in self.target.iterdir()}, expected)
+        self.assertEqual({path.name for path in (app / "skills").iterdir()}, expected)
+        for name in selected:
+            self.assertEqual((self.target / name).readlink(), tstack / "skills" / name)
+            self.assertEqual((app / "skills" / name).resolve(), tstack / "skills" / name)
+            self.assertTrue((app / "skills" / name / "SKILL.md").is_file())
+
     def test_opencode_targets_use_global_config_directory(self) -> None:
         config = Path("~/.config/opencode").expanduser()
         self.assertIn(("opencode", config, config / "skills"), self.module.APP_SKILL_DIRS)

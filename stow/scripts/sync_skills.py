@@ -25,6 +25,8 @@ SHOW_ME_PATH = Path("plugins/show-me/skills/show-me")
 REMOTION_SKILLS_REPO = Path("~/repos/remotion-skills").expanduser()
 REMOTION_SKILLS_URL = "https://github.com/remotion-dev/skills.git"
 REMOTION_SKILL_PATH = Path("skills/remotion-best-practices")
+TSTACK_SKILLS_REPO = Path("~/repos/tstack").expanduser()
+TSTACK_SKILLS_URL = "https://github.com/t3dotgg/tstack.git"
 TARGET_DIR = Path("~/repos/cc-config/skills/sym_linked").expanduser()
 CC_CONFIG_SKILLS_DIR = Path("~/repos/cc-config/skills").expanduser()
 AGENTS_SOURCE = Path("~/repos/cc-config/AGENTS.md").expanduser()
@@ -35,6 +37,9 @@ SOURCE_DIRS = [
 SOURCE_SKILLS = [
     HUMANLAYER_SKILLS_REPO / SHOW_ME_PATH,
     REMOTION_SKILLS_REPO / REMOTION_SKILL_PATH,
+    TSTACK_SKILLS_REPO / "skills/council",
+    TSTACK_SKILLS_REPO / "skills/modernize",
+    TSTACK_SKILLS_REPO / "skills/takeover",
 ]
 APP_SKILL_DIRS = [
     ("pi", Path("~/.pi/agent").expanduser(), Path("~/.pi/agent/skills").expanduser()),
@@ -151,11 +156,19 @@ def pull_skills() -> None:
         REMOTION_SKILL_PATH,
     )
 
+    clone_sparse_repo(
+        TSTACK_SKILLS_REPO,
+        "tstack skills repo",
+        TSTACK_SKILLS_URL,
+        Path("skills"),
+    )
+
     for repo in [
         SKILLS_REPO,
         CURSOR_PLUGINS_REPO,
         HUMANLAYER_SKILLS_REPO,
         REMOTION_SKILLS_REPO,
+        TSTACK_SKILLS_REPO,
     ]:
         print(f"Pulling {repo}")
         try:
