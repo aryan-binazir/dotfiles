@@ -53,6 +53,62 @@ class SyncSkillsTest(unittest.TestCase):
         self.assertEqual((self.target / "architect").readlink(), other)
         self.assertEqual((self.target / "notes").read_text(), "keep")
 
+    def test_opencode_targets_use_global_config_directory(self) -> None:
+        config = Path("~/.config/opencode").expanduser()
+        self.assertIn(("opencode", config, config / "skills"), self.module.APP_SKILL_DIRS)
+        self.assertIn(("opencode", config, config / "AGENTS.md"), self.module.APP_INSTRUCTION_LINKS)
+
+    def test_opencode_sync_links_skills_and_instructions_repeatably(self) -> None:
+        config = self.root / ".config/opencode"
+        app_skills = config / "skills"
+        app_skills.mkdir(parents=True)
+        config_skills = self.target.parent
+        skill = config_skills / "personal_dev/review"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("review")
+        agents = config_skills.parent / "AGENTS.md"
+        agents.write_text("shared instructions")
+        (app_skills / "stale").symlink_to(config_skills / "removed")
+        external = self.root / "external"
+        external.mkdir()
+        (app_skills / "external").symlink_to(external)
+        local = app_skills / "local"
+        local.mkdir()
+        (local / "SKILL.md").write_text("keep local skill")
+
+        with patch.multiple(
+            self.module,
+            CC_CONFIG_SKILLS_DIR=config_skills,
+            AGENTS_SOURCE=agents,
+            APP_SKILL_DIRS=[("opencode", config, app_skills)],
+            APP_INSTRUCTION_LINKS=[("opencode", config, config / "AGENTS.md")],
+        ):
+            for _ in range(2):
+                self.module.sync_app_skill_dirs()
+                self.module.sync_instruction_links()
+
+        self.assertEqual((app_skills / "review").readlink(), skill)
+        self.assertEqual((config / "AGENTS.md").readlink(), agents)
+        self.assertEqual((app_skills / "external").readlink(), external)
+        self.assertEqual((local / "SKILL.md").read_text(), "keep local skill")
+        self.assertEqual({path.name for path in app_skills.iterdir()}, {"review", "external", "local"})
+
+    def test_opencode_sync_preserves_existing_instructions(self) -> None:
+        config = self.root / ".config/opencode"
+        config.mkdir(parents=True)
+        instructions = config / "AGENTS.md"
+        instructions.write_text("local instructions")
+        agents = self.target.parent.parent / "AGENTS.md"
+        agents.write_text("shared instructions")
+        with patch.multiple(
+            self.module,
+            AGENTS_SOURCE=agents,
+            APP_INSTRUCTION_LINKS=[("opencode", config, instructions)],
+        ):
+            self.module.sync_instruction_links()
+        self.assertFalse(instructions.is_symlink())
+        self.assertEqual(instructions.read_text(), "local instructions")
+
     def test_app_cleanup_preserves_other_sources(self) -> None:
         app = self.root / "app/skills"
         app.mkdir(parents=True)

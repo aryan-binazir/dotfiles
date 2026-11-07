@@ -41,11 +41,13 @@ APP_SKILL_DIRS = [
     ("codex", Path("~/.codex").expanduser(), Path("~/.codex/skills").expanduser()),
     ("claude", Path("~/.claude").expanduser(), Path("~/.claude/skills").expanduser()),
     ("cursor", Path("~/.cursor").expanduser(), Path("~/.cursor/skills").expanduser()),
+    ("opencode", Path("~/.config/opencode").expanduser(), Path("~/.config/opencode/skills").expanduser()),
 ]
 APP_INSTRUCTION_LINKS = [
     ("codex", Path("~/.codex").expanduser(), Path("~/.codex/AGENTS.md").expanduser()),
     ("claude", Path("~/.claude").expanduser(), Path("~/.claude/CLAUDE.md").expanduser()),
     ("cursor", Path("~/.cursor").expanduser(), Path("~/.cursor/AGENTS.md").expanduser()),
+    ("opencode", Path("~/.config/opencode").expanduser(), Path("~/.config/opencode/AGENTS.md").expanduser()),
 ]
 
 
