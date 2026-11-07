@@ -93,6 +93,83 @@ class SyncSkillsTest(unittest.TestCase):
             self.assertEqual((app / "skills" / name).resolve(), tstack / "skills" / name)
             self.assertTrue((app / "skills" / name / "SKILL.md").is_file())
 
+    def test_main_syncs_other_skills_and_instructions_without_hunk(self) -> None:
+        app = self.root / "app"
+        app.mkdir()
+        agents = self.target.parent.parent / "AGENTS.md"
+        agents.write_text("shared instructions")
+        with patch.multiple(
+            self.module,
+            SOURCE_DIRS=[],
+            SOURCE_SKILLS=[],
+            CC_CONFIG_SKILLS_DIR=self.target.parent,
+            AGENTS_SOURCE=agents,
+            APP_SKILL_DIRS=[("test", app, app / "skills")],
+            APP_INSTRUCTION_LINKS=[("test", app, app / "AGENTS.md")],
+        ), patch.object(self.module, "pull_skills"), patch.object(
+            self.module.subprocess, "run", side_effect=FileNotFoundError("hunk")
+        ):
+            for _ in range(2):
+                self.assertEqual(self.module.main(), 0)
+
+        expected = self.module.PSTACK_ALLOWED_SKILL_NAMES
+        self.assertEqual({path.name for path in self.target.iterdir()}, expected)
+        self.assertEqual({path.name for path in (app / "skills").iterdir()}, expected)
+        for name in expected:
+            self.assertEqual((app / "skills" / name).resolve(), self.skills / name)
+            self.assertTrue((app / "skills" / name / "SKILL.md").is_file())
+        self.assertEqual((app / "AGENTS.md").readlink(), agents)
+
+    def test_installed_hunk_errors_are_reported(self) -> None:
+        with patch.multiple(self.module, SOURCE_DIRS=[], SOURCE_SKILLS=[]):
+            with patch.object(
+                self.module.subprocess,
+                "run",
+                side_effect=self.module.subprocess.CalledProcessError(1, ["hunk"]),
+            ), self.assertRaisesRegex(RuntimeError, "hunk skill path failed"):
+                self.module.symlink_skills()
+            with patch.object(self.module.subprocess, "run") as run:
+                run.return_value.stdout = "invalid path"
+                with self.assertRaisesRegex(RuntimeError, "invalid skill path"):
+                    self.module.symlink_skills()
+
+    def test_missing_apps_are_skipped_while_present_apps_sync(self) -> None:
+        skill = self.target.parent / "review"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text("review")
+        agents = self.target.parent.parent / "AGENTS.md"
+        agents.write_text("shared instructions")
+        app_names = [name for name, _, _ in self.module.APP_SKILL_DIRS]
+        instruction_names = {name for name, _, _ in self.module.APP_INSTRUCTION_LINKS}
+        for missing in app_names:
+            with self.subTest(missing=missing):
+                apps = {name: self.root / missing / name for name in app_names}
+                for name, app in apps.items():
+                    if name != missing:
+                        app.mkdir(parents=True)
+                with patch.multiple(
+                    self.module,
+                    CC_CONFIG_SKILLS_DIR=self.target.parent,
+                    AGENTS_SOURCE=agents,
+                    APP_SKILL_DIRS=[
+                        (name, app, app / "skills") for name, app in apps.items()
+                    ],
+                    APP_INSTRUCTION_LINKS=[
+                        (name, apps[name], apps[name] / "AGENTS.md")
+                        for name in instruction_names
+                    ],
+                ):
+                    self.module.sync_app_skill_dirs()
+                    self.module.sync_instruction_links()
+
+                self.assertFalse(apps[missing].exists())
+                for name, app in apps.items():
+                    if name == missing:
+                        continue
+                    self.assertEqual((app / "skills/review").readlink(), skill)
+                    if name in instruction_names:
+                        self.assertEqual((app / "AGENTS.md").readlink(), agents)
+
     def test_opencode_targets_use_global_config_directory(self) -> None:
         config = Path("~/.config/opencode").expanduser()
         self.assertIn(("opencode", config, config / "skills"), self.module.APP_SKILL_DIRS)

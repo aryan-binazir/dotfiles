@@ -183,38 +183,6 @@ def symlink_skills() -> None:
     for source_skill in SOURCE_SKILLS:
         require_dir(source_skill, "source skill directory")
 
-    try:
-        hunk_skill_result = subprocess.run(
-            ["hunk", "skill", "path"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError as error:
-        raise RuntimeError("hunk not found in PATH") from error
-    except subprocess.CalledProcessError as error:
-        raise RuntimeError("hunk skill path failed") from error
-
-    hunk_skill_files = []
-    for output_line in hunk_skill_result.stdout.splitlines():
-        candidate = Path(output_line.strip()).expanduser()
-        if candidate.is_file() and candidate.name == "SKILL.md":
-            hunk_skill_files.append(candidate)
-
-    if len(hunk_skill_files) != 1:
-        raise RuntimeError(
-            f"hunk returned invalid skill path: {hunk_skill_result.stdout.strip()}"
-        )
-    hunk_skill_file = hunk_skill_files[0]
-
-    TARGET_DIR.mkdir(parents=True, exist_ok=True)
-    remove_excluded_pstack_links()
-    print(f"Syncing skills into {TARGET_DIR}")
-
-    created = 0
-    replaced = 0
-    unchanged = 0
-
     candidates: list[Path] = []
     for source_dir in SOURCE_DIRS:
         for source_path in sorted(source_dir.iterdir()):
@@ -223,7 +191,38 @@ def symlink_skills() -> None:
 
     candidates.extend(SOURCE_SKILLS)
     candidates.extend(iter_pstack_skill_dirs())
-    candidates.append(hunk_skill_file.parent)
+
+    try:
+        hunk_skill_result = subprocess.run(
+            ["hunk", "skill", "path"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        print("Skipping hunk: executable not found in PATH")
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError("hunk skill path failed") from error
+    else:
+        hunk_skill_files = []
+        for output_line in hunk_skill_result.stdout.splitlines():
+            candidate = Path(output_line.strip()).expanduser()
+            if candidate.is_file() and candidate.name == "SKILL.md":
+                hunk_skill_files.append(candidate)
+
+        if len(hunk_skill_files) != 1:
+            raise RuntimeError(
+                f"hunk returned invalid skill path: {hunk_skill_result.stdout.strip()}"
+            )
+        candidates.append(hunk_skill_files[0].parent)
+
+    TARGET_DIR.mkdir(parents=True, exist_ok=True)
+    remove_excluded_pstack_links()
+    print(f"Syncing skills into {TARGET_DIR}")
+
+    created = 0
+    replaced = 0
+    unchanged = 0
 
     source_paths: list[Path] = []
     seen_names: set[str] = set()
