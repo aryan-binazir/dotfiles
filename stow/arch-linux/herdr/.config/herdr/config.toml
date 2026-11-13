@@ -42,7 +42,6 @@ resize_pane_down = ["prefix+down", "ctrl+alt+shift+down"]
 resize_pane_up = ["prefix+up", "ctrl+alt+shift+up"]
 resize_pane_right = ["prefix+right", "ctrl+alt+shift+right"]
 
-# The default prefix+shift+p is previous_workspace here
 rename_pane = "prefix+shift+o"
 
 rename_tab = "prefix+comma"
