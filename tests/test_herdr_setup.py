@@ -18,7 +18,6 @@ class SetupTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         tmp = self.tmp = Path(temporary.name).resolve()
-        # Copies outside Git, so links never point into the checkout under test.
         for path in (HERDR, "stow/scripts"):
             shutil.copytree(ROOT / path, tmp / path)
         (tmp / "bin").mkdir()
