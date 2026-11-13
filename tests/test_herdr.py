@@ -14,8 +14,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 HERDR_CONFIG = ROOT / "stow/arch-linux/herdr/.config/herdr"
-SCRIPT = HERDR_CONFIG / "scripts/confirm-close.sh"
 PLUGIN = HERDR_CONFIG / "plugins/confirm-close"
+SCRIPT = PLUGIN / "confirm.sh"
 
 
 class ConfirmCloseTests(unittest.TestCase):
