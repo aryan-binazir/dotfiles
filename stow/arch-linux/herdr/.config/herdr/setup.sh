@@ -31,7 +31,7 @@ link "$(cd "$src/../../../../scripts" && pwd -P)/hm" "$HOME/.local/bin/hm"
 # Directory link: the plugin saves model-selection.json by atomic replacement.
 link "$src/plugins/config/tab-smart-rename" "$cfg/plugins/config/tab-smart-rename"
 
-install aryan-binazir/herdr-triage "$(git ls-remote https://github.com/aryan-binazir/herdr-triage HEAD | cut -f1)" # Git, Cargo
+install aryan-binazir/herdr-triage "$(git ls-remote https://github.com/aryan-binazir/herdr-triage HEAD | cut -f1)" # Cargo
 install jhochenbaum/herdr-hunk-diff ac5eef7cec6a65fbf8f0c9bbd61b4383489beba5 # Node 22.12+
 install ChmaraX/herdr-nvim 26cd43e38126be8012b59f95fd41ef33574d0d08 # nvim 0.10+
 install iurysza/herdr-tab-smart-rename 37a4c89e0dc35d234b8381337eced577eb517f8b # Bun 1.2.23+ on the server PATH
