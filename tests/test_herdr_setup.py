@@ -29,7 +29,7 @@ class SetupTests(unittest.TestCase):
                         PATH=f"{tmp}/bin:{os.environ['PATH']}")
 
     def run_setup(self):
-        (self.tmp / "calls").unlink(missing_ok=True)
+        (self.tmp / "calls").write_text("")
         result = subprocess.run(["bash", self.tmp / HERDR / "setup.sh"], env=self.env,
                                 capture_output=True, text=True, timeout=10)
         return result, (self.tmp / "calls").read_text()
@@ -54,3 +54,8 @@ class SetupTests(unittest.TestCase):
         self.assertIn("exists; not replacing", result.stderr)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((self.cfg / "config.toml").read_text(), "mine\n")
+
+    def test_symlinked_parent_is_refused(self):
+        self.cfg.mkdir(parents=True)
+        (self.cfg / "plugins").symlink_to(self.tmp / HERDR / "plugins")
+        self.assertIn("is a symlink", self.run_setup()[0].stderr)

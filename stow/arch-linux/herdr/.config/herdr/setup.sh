@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# Per-machine Herdr links and plugin pins. Rerunnable; never replaces a destination.
 set -eu
+die() { echo "setup.sh: $*" >&2; exit 1; }
 src=$(cd "$(dirname "$0")" && pwd -P)
 case $(git -C "$src" rev-parse --git-dir 2>/dev/null) in
-*/worktrees/*) echo "setup.sh: run from the permanent checkout" >&2; exit 1 ;;
+*/worktrees/*) die "run from the permanent checkout" ;;
 esac
 cfg=$HOME/.config/herdr
+for d in "$cfg" "$cfg/plugins" "$cfg/plugins/config"; do ! [ -L "$d" ] || die "$d is a symlink"; done
 mkdir -p "$cfg/plugins/config" "$HOME/.local/bin"
 list=$(herdr plugin list)
 has() { case $list in *"$1"*) return 0 ;; esac; return 1; }
 link() {
   [ -L "$2" ] && [ "$2" -ef "$1" ] && return
-  if [ -e "$2" ] || [ -L "$2" ]; then echo "setup.sh: $2 exists; not replacing" >&2; exit 1; fi
-  ln -s "$1" "$2"
+  ! [ -e "$2" ] && ! [ -L "$2" ] || die "$2 exists; not replacing"
+  ln -sn "$1" "$2"
 }
 install() { has "github:$1@$2" || herdr plugin install "$1" ${2:+--ref "$2"}; }
 
