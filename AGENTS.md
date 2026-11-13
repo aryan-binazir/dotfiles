@@ -10,7 +10,7 @@ The README's layout and installation instructions are stale. Inspect actual sour
 - Wire new executable callers into the installation; files in `stow/scripts/` are not automatically on PATH. Helpers may resolve beside their source.
 - Preserve `shell/gw.bash` as a sourced function so it can change the calling shell's directory.
 - For tmux spinner, sound, notifications, daemon lifecycle or click navigation, follow `docs/tmux-agent-attention.md`. Keep optional desktop integrations from breaking core tmux/shell behavior or other terminals.
-- For `gb`/`gw` cleanup changes, read `docs/git-branch-cleanup.md`.
+- Read first: for `gb`/`gw` cleanup, `docs/git-branch-cleanup.md`; for Herdr, `hm` or the `codex --no-daemon` alias, `stow/arch-linux/herdr/.config/herdr/AGENTS.md`.
 - For Neovim, use the separate repo linked in `README.md`.
 - Ask before changing user-facing behavior or scope, overwriting configs, or making hard-to-reverse changes. Reload live tmux only when requested, using the existing server and installed config; preserve sessions and runtime settings. If no server exists, report that instead of starting one to claim a reload.
 
