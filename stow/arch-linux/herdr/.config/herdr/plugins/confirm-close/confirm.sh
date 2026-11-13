@@ -3,7 +3,6 @@ set -u
 
 [[ ${HERDR_ACTIVE_PANE_ID:-} && ${HERDR_SOCKET_PATH:-} ]] ||
     { printf 'Missing Herdr popup pane or socket context; refusing to close.\n' >&2; exit 1; }
-# The popup terminal is discarded on exit, so the cursor stays hidden throughout.
 printf '\033[?25l Kill? (y/n) '
 IFS= read -r -s -n 1 answer || exit 0
 [[ $answer == [yY] ]] || exit 0
