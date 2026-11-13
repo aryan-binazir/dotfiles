@@ -1,55 +1,30 @@
 onboarding = false
-# Mirrors the Omarchy tmux config in config/tmux/tmux.conf
-# tmux session -> herdr workspace, tmux window -> herdr tab, tmux pane -> herdr pane
 
-[theme]
-# tmux ran on the terminal's own palette (bg=default, fg=default, ANSI blue accents)
-name = "catppuccin"
-
-auto_switch = false
 [theme.custom]
-# The active tab is drawn as panel_bg text on an accent background, so panel_bg
-# has to be dark for it to read - same colors as status-left's "#[fg=black,bg=blue]"
+# The active tab is panel_bg text on the accent, so panel_bg must be dark
 panel_bg = "black"
-
-[terminal]
-# Matches -c "#{pane_current_path}" on every split, window, and session
-new_cwd = "follow"
 
 [worktrees]
 directory = "~/repos/.worktrees"
 
 [keys]
-prefix = "ctrl+b"
-
-# Config and help
 reload_config = "prefix+q"
-help = "prefix+?"
 settings = "prefix+shift+s"
 detach = "prefix+d"
 workspace_picker = "prefix+s"
 
-# Worktrees
 open_worktree = "prefix+shift+t"
-# Herdr confirms before removing the checkout
 remove_worktree = "prefix+shift+d"
 
-# Copy mode
 copy_mode = "prefix+["
 
 # Agents, in the ar.triage plugin's order
 next_agent = "prefix+]"
 previous_agent = "prefix+\\"
 
-# Panes
 split_horizontal = ['prefix+"', "alt+enter"]
 split_vertical = ["prefix+percent", "alt+shift+enter"]
 close_pane = "alt+esc"
-zoom = "prefix+z"
-# Capital L returns to the last focused space, bound below via the
-# plugins/last-workspace plugin (built-in last_pane also crosses tabs)
-last_pane = ""
-# tmux prefix+; / prefix+o: move to the next pane in the current tab
 cycle_pane_next = ["prefix+;", "prefix+o", "prefix+tab"]
 swap_pane_right = ""
 
@@ -61,46 +36,35 @@ focus_pane_right = ["prefix+l", "ctrl+alt+right"]
 navigate_workspace_up = ["up", "k"]
 navigate_workspace_down = ["down", "j"]
 
-# Prefix+r enters resize mode; use arrows repeatedly, then Esc or Enter to finish.
 resize_mode = ["prefix+r", "prefix+ctrl+left", "prefix+ctrl+down", "prefix+ctrl+up", "prefix+ctrl+right"]
-
-# Like tmux prefix+arrows and C-M-S-arrows
 resize_pane_left = ["prefix+left", "ctrl+alt+shift+left"]
 resize_pane_down = ["prefix+down", "ctrl+alt+shift+down"]
 resize_pane_up = ["prefix+up", "ctrl+alt+shift+up"]
 resize_pane_right = ["prefix+right", "ctrl+alt+shift+right"]
 
-# No tmux equivalent; herdr's default prefix+shift+p is taken by previous session
+# The default prefix+shift+p is previous_workspace here
 rename_pane = "prefix+shift+o"
 
-# Windows -> tabs
-new_tab = "prefix+c"
 rename_tab = "prefix+comma"
 close_tab = "prefix+ampersand"
-switch_tab = "prefix+1..9"
 previous_tab = ["prefix+p", "alt+left"]
 next_tab = ["prefix+n", "alt+right"]
-
-# Like swap-window -t -1/+1 on M-S-Left/Right
 move_tab_previous = "alt+shift+left"
 move_tab_next = "alt+shift+right"
 
-# Sessions -> workspaces
 new_workspace = "prefix+shift+c"
 rename_workspace = 'prefix+$'
 close_workspace = "prefix+shift+k"
 previous_workspace = ["prefix+shift+p", "alt+up"]
 next_workspace = ["prefix+shift+n", "alt+down"]
 
-# One-time setup on a new machine (the link registry lives outside dotfiles):
-#   herdr plugin link ~/.config/herdr/plugins/last-workspace
+# Plugin setup: AGENTS.md here. Not last_pane, which also crosses tabs
 [[keys.command]]
 key = "prefix+shift+l"
 type = "plugin_action"
 command = "ar.last-workspace.toggle"
 description = "go to last space"
 
-# Install per machine: stow/arch-linux/herdr/.config/herdr/AGENTS.md in dotfiles.
 [[keys.command]]
 key = "prefix+a"
 type = "plugin_action"
@@ -152,35 +116,14 @@ description = "send hunk review to agent"
 
 [ui]
 accent = "blue"
-
-# tmux drew single-line dividers between adjacent panes and no outer frame
 pane_gaps = false
 pane_outer_borders = false
-
-# tmux had no scrollbar column beside its panes
 pane_scrollbars = false
-
-# Confirm before closing a workspace
-confirm_close = true
-
-# automatic-rename gave windows a name without prompting
 prompt_new_tab_name = false
-
-# set -g mouse on
-mouse_capture = true
-
-# status-right had the zoom flag followed by #h
 tab_bar_right = [{ type = "zoom" }, { type = "hostname" }]
-
-# set -g set-titles on / set -g set-titles-string '#h:#W', where tmux's #W was
-# the basename of the pane cwd. This is what Hyprland shows in the group bar,
-# and it resolves on the server so remote sessions name the remote host.
-window_title = "{hostname}: {workspace}"
-show_agent_labels_on_pane_borders = false
-
 agent_panel_sort = "priority"
 
-# Default rows plus the ar.triage plugin's pin/unread/woke label; it hides parked agents
+# ar.triage adds the $triage pin/unread/woke label and hides parked agents
 [ui.sidebar.agents]
 rows = [
   ["state_icon", "machine", "workspace", "tab"],
