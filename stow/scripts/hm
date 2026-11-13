@@ -30,10 +30,10 @@ fi
 selected=$(realpath -- "$selected")
 selected_name=$(basename "$selected" | tr . _)
 workspace_id=$(
-    herdr workspace list |
-        jq -r --arg dir "$selected/" --arg label "$selected_name" --argjson panes "$(herdr pane list)" '
-            [$panes.result.panes[] | select(.cwd + "/" | startswith($dir)) | .workspace_id] as $ids
-            | first(.result.workspaces[] | select(.label == $label and IN(.workspace_id; $ids[])))
+    { herdr pane list; herdr workspace list; } |
+        jq -rs --arg dir "${selected%/}/" --arg label "$selected_name" '
+            [.[0].result.panes[] | select(.cwd + "/" | startswith($dir)) | .workspace_id] as $ids
+            | first(.[1].result.workspaces[] | select(.label == $label and IN(.workspace_id; $ids[])))
             | .workspace_id
         '
 )
