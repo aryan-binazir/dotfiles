@@ -17,7 +17,7 @@ link() {
 }
 install() {
   has "disabled [github:$1@" && return
-  has "github:$1@$2" || herdr plugin install "$1" ${2:+--ref "$2"}
+  has "github:$1@$2" || MISE_TRUSTED_CONFIG_PATHS=$cfg/plugins herdr plugin install "$1" ${2:+--ref "$2"}
 }
 
 for p in confirm-close last-workspace; do

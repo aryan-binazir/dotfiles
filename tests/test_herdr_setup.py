@@ -11,7 +11,8 @@ touch "$TEST_DIR/state"
 case $2 in
 list) cat "$TEST_DIR/state"; exit ;;
 link) key="local:$(cd "$3" && pwd -P)"; line="${4#--} [$key]" ;;
-*) key="github:$3@"; line="enabled [$key${5:-main}]" ;;
+*) [ "${MISE_TRUSTED_CONFIG_PATHS-}" = "$HOME/.config/herdr/plugins" ] || { echo "mise.toml not trusted" >&2; exit 1; }
+   key="github:$3@"; line="enabled [$key${5:-main}]" ;;
 esac
 grep -vF "[$key" "$TEST_DIR/state" >"$TEST_DIR/kept"
 { cat "$TEST_DIR/kept"; echo "$line"; } >"$TEST_DIR/state"
