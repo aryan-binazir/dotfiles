@@ -3,13 +3,23 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 HERDR = "stow/arch-linux/herdr/.config/herdr"
-STUB = """#!/bin/sh
+TRIAGE = "aryan-binazir/herdr-triage"
+OLD, NEW = "a" * 40, "b" * 40
+HERDR_STUB = """#!/bin/sh
 echo "$*" >>"$TEST_DIR/calls"
+touch "$TEST_DIR/state"
 case $2 in
-list) cat "$TEST_DIR/state" 2>/dev/null || true ;;
-link) echo "[local:$(cd "$3" && pwd -P)]" >>"$TEST_DIR/state" ;;
-*) echo "github:$3@${5:-main}" >>"$TEST_DIR/state" ;;
+list) cat "$TEST_DIR/state"; exit ;;
+link) key="local:$(cd "$3" && pwd -P)"; line="${4#--} [$key]" ;;
+*) [ "${MISE_TRUSTED_CONFIG_PATHS-}" = "$HOME/.config/herdr/plugins" ] || { echo "mise.toml not trusted" >&2; exit 1; }
+   key="github:$3@"; line="enabled [$key${5:-main}]" ;;
 esac
+grep -vF "[$key" "$TEST_DIR/state" >"$TEST_DIR/kept"
+{ cat "$TEST_DIR/kept"; echo "$line"; } >"$TEST_DIR/state"
+"""
+GIT_STUB = """#!/bin/sh
+[ "$1" = ls-remote ] && [ -n "${TRIAGE_HEAD-}" ] || exit 128
+printf '%s\\tHEAD\\n' "$TRIAGE_HEAD"
 """
 
 
@@ -21,35 +31,59 @@ class SetupTests(unittest.TestCase):
         for path in (HERDR, "stow/scripts"):
             shutil.copytree(ROOT / path, tmp / path)
         (tmp / "bin").mkdir()
-        (tmp / "bin/herdr").write_text(STUB)
-        (tmp / "bin/herdr").chmod(0o755)
+        for name, stub in (("herdr", HERDR_STUB), ("git", GIT_STUB)):
+            (tmp / "bin" / name).write_text(stub)
+            (tmp / "bin" / name).chmod(0o755)
         self.cfg = tmp / "home/.config/herdr"
         self.env = dict(os.environ, HOME=str(tmp / "home"), TEST_DIR=str(tmp),
                         PATH=f"{tmp}/bin:{os.environ['PATH']}")
 
-    def run_setup(self):
+    def setup_sh(self, head=OLD):
         (self.tmp / "calls").write_text("")
-        result = subprocess.run(["bash", self.tmp / HERDR / "setup.sh"], env=self.env,
-                                capture_output=True, text=True, timeout=10)
-        return result, (self.tmp / "calls").read_text()
+        env = dict(self.env, TRIAGE_HEAD=head) if head else self.env
+        return subprocess.run(["bash", self.tmp / HERDR / "setup.sh"], env=env,
+                              capture_output=True, text=True, timeout=10)
 
-    def test_links_registers_and_pins_then_reruns_as_a_no_op(self):
-        result, calls = self.run_setup()
+    def run_setup(self, head=OLD):
+        result = self.setup_sh(head)
         self.assertEqual(result.returncode, 0, result.stderr)
+        return (self.tmp / "calls").read_text()
+
+    def relinks(self, confirm_close="--enabled"):
+        return (f"plugin list\nplugin link {self.cfg}/plugins/confirm-close {confirm_close}\n"
+                f"plugin link {self.cfg}/plugins/last-workspace --enabled\n")
+
+    def disable(self, key):
+        state = self.tmp / "state"
+        state.write_text("".join(line.replace("enabled [", "disabled [") if key in line else line
+                                 for line in state.read_text().splitlines(keepends=True)))
+
+    def test_links_registers_and_pins_then_reruns_only_refresh_local_plugins(self):
+        calls = self.run_setup()
         for name in ("config.toml", "plugins/confirm-close", "plugins/last-workspace",
                      "plugins/config/tab-smart-rename"):
             self.assertEqual(os.readlink(self.cfg / name), str(self.tmp / HERDR / name))
         self.assertTrue((self.tmp / "home/.local/bin/hm").samefile(self.tmp / "stow/scripts/hm"))
-        self.assertRegex(calls, r"^plugin list\nplugin link \S+/confirm-close\n"
-                         r"plugin link \S+/last-workspace\nplugin install aryan-binazir/herdr-triage\n"
+        self.assertRegex(calls, "^" + self.relinks() + f"plugin install {TRIAGE} --ref {OLD}\n"
                          r"(plugin install \S+ --ref [0-9a-f]{40}\n){3}$")
-        result, calls = self.run_setup()
-        self.assertEqual((result.returncode, calls), (0, "plugin list\n"), result.stderr)
+        self.assertEqual(self.run_setup(), self.relinks())
+
+    def test_triage_follows_upstream_head_and_stays_put_offline(self):
+        self.run_setup()
+        self.assertEqual(self.run_setup(NEW), self.relinks() + f"plugin install {TRIAGE} --ref {NEW}\n")
+        self.assertEqual(self.run_setup(None), self.relinks())
+
+    def test_disabled_plugins_stay_disabled(self):
+        self.run_setup()
+        self.disable("confirm-close]")
+        self.disable(TRIAGE)
+        for _ in range(2):
+            self.assertEqual(self.run_setup(NEW), self.relinks("--disabled"))
 
     def test_existing_destination_is_left_alone(self):
         self.cfg.mkdir(parents=True)
         (self.cfg / "config.toml").write_text("mine\n")
-        result, _ = self.run_setup()
+        result = self.setup_sh()
         self.assertIn("exists; not replacing", result.stderr)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((self.cfg / "config.toml").read_text(), "mine\n")
@@ -57,4 +91,5 @@ class SetupTests(unittest.TestCase):
     def test_symlinked_parent_is_refused(self):
         self.cfg.mkdir(parents=True)
         (self.cfg / "plugins").symlink_to(self.tmp / HERDR / "plugins")
-        self.assertIn("is a symlink", self.run_setup()[0].stderr)
+        result = self.setup_sh()
+        self.assertIn("is a symlink", result.stderr)
