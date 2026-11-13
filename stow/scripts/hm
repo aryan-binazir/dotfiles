@@ -15,12 +15,12 @@ fi
 if (( $# == 1 )); then
     selected=$1
 else
-    selected=$(fzf < <(find ~ ~/repos -mindepth 1 -maxdepth 5 -type d 2>/dev/null)) || exit 0
+    selected=$(fzf < <(find ~ -mindepth 1 -maxdepth 6 \
+        \( -name node_modules -o -name '.*' ! -name .config ! -name .worktrees \) -prune -o \
+        -type d \( -path ~/repos/\* -o ! -path ~/\*/\*/\*/\*/\*/\* \) -print 2>/dev/null)) || exit 0
 fi
 
-if [[ -z $selected ]]; then
-    exit 0
-fi
+[[ -n $selected ]] || exit 0
 
 if [[ ! -d $selected ]]; then
     echo "error: not a directory: $selected" >&2
@@ -31,12 +31,10 @@ selected=$(realpath -- "$selected")
 selected_name=$(basename "$selected" | tr . _)
 workspace_id=$(
     herdr workspace list |
-        jq -r --arg label "$selected_name" '
-            first(
-                .result.workspaces[]
-                | select(.label == $label)
-                | .workspace_id
-            ) // empty
+        jq -r --arg dir "$selected/" --arg label "$selected_name" --argjson panes "$(herdr pane list)" '
+            [$panes.result.panes[] | select(.cwd + "/" | startswith($dir)) | .workspace_id] as $ids
+            | first(.result.workspaces[] | select(.label == $label and IN(.workspace_id; $ids[])))
+            | .workspace_id
         '
 )
 
