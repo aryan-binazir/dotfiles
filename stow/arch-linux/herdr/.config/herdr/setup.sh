@@ -15,18 +15,23 @@ link() {
   ! [ -e "$2" ] && ! [ -L "$2" ] || die "$2 exists; not replacing"
   ln -sn "$1" "$2"
 }
-install() { has "github:$1@$2" || herdr plugin install "$1" ${2:+--ref "$2"}; }
+install() {
+  has "disabled [github:$1@" && return
+  has "github:$1@$2" || herdr plugin install "$1" ${2:+--ref "$2"}
+}
 
 for p in confirm-close last-workspace; do
   link "$src/plugins/$p" "$cfg/plugins/$p"
-  has "[local:$src/plugins/$p]" || herdr plugin link "$cfg/plugins/$p"
+  state=--enabled
+  has "disabled [local:$src/plugins/$p]" && state=--disabled
+  herdr plugin link "$cfg/plugins/$p" "$state"
 done
 link "$src/config.toml" "$cfg/config.toml"
 link "$(cd "$src/../../../../scripts" && pwd -P)/hm" "$HOME/.local/bin/hm"
 # Directory link: the plugin saves model-selection.json by atomic replacement.
 link "$src/plugins/config/tab-smart-rename" "$cfg/plugins/config/tab-smart-rename"
 
-install aryan-binazir/herdr-triage '' # Git, Cargo
+install aryan-binazir/herdr-triage "$(git ls-remote https://github.com/aryan-binazir/herdr-triage HEAD | cut -f1)" # Git, Cargo
 install jhochenbaum/herdr-hunk-diff ac5eef7cec6a65fbf8f0c9bbd61b4383489beba5 # Node 22.12+
 install ChmaraX/herdr-nvim 26cd43e38126be8012b59f95fd41ef33574d0d08 # nvim 0.10+
 install iurysza/herdr-tab-smart-rename 37a4c89e0dc35d234b8381337eced577eb517f8b # Bun 1.2.23+ on the server PATH
