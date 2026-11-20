@@ -1,0 +1,10 @@
+keyd 2.6.0-5
+Id=keyd.service
+LoadState=loaded
+ActiveState=active
+UnitFileState=enabled
+
+Id=udevmon.service
+LoadState=loaded
+ActiveState=inactive
+UnitFileState=disabled
