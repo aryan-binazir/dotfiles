@@ -2,7 +2,7 @@
 
 Shared configs and tools support macOS and Arch Linux/Omarchy. This includes `stow/arch-linux/tmux/.config/tmux/tmux.conf`. Check each script's commands and callers for platform scope; preserve shell-version and BSD/GNU compatibility.
 
-The README's layout and installation instructions are stale. Inspect actual sources and installed symlink targets. `BACKUP-*` directories are snapshots, not active sources. `stow/scripts/` is not a Stow package to install wholesale.
+The README's layout and installation instructions are stale. Inspect actual sources and installed symlink targets. Hyprland, Omarchy, Ghostty and keyd config is backed up in the private `omarchy-setup` repo, not here. `stow/scripts/` is not a Stow package to install wholesale.
 
 ## Changes
 
