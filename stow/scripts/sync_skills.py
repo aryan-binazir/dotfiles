@@ -47,6 +47,7 @@ APP_SKILL_DIRS = [
     ("claude", Path("~/.claude").expanduser(), Path("~/.claude/skills").expanduser()),
     ("cursor", Path("~/.cursor").expanduser(), Path("~/.cursor/skills").expanduser()),
     ("opencode", Path("~/.config/opencode").expanduser(), Path("~/.config/opencode/skills").expanduser()),
+    ("antigravity", Path("~/.gemini/config").expanduser(), Path("~/.gemini/config/skills").expanduser()),
 ]
 APP_INSTRUCTION_LINKS = [
     ("codex", Path("~/.codex").expanduser(), Path("~/.codex/AGENTS.md").expanduser()),

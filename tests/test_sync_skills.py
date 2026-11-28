@@ -175,6 +175,10 @@ class SyncSkillsTest(unittest.TestCase):
         self.assertIn(("opencode", config, config / "skills"), self.module.APP_SKILL_DIRS)
         self.assertIn(("opencode", config, config / "AGENTS.md"), self.module.APP_INSTRUCTION_LINKS)
 
+    def test_antigravity_target_uses_global_config_directory(self) -> None:
+        config = Path("~/.gemini/config").expanduser()
+        self.assertIn(("antigravity", config, config / "skills"), self.module.APP_SKILL_DIRS)
+
     def test_opencode_sync_links_skills_and_instructions_repeatably(self) -> None:
         config = self.root / ".config/opencode"
         app_skills = config / "skills"
